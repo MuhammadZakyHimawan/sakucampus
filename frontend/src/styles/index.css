@@ -1,0 +1,43 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-primary: 51 103 153;
+  --color-primary-dark: 29 75 118;
+  --color-primary-light: 231 244 246;
+  --color-background: 246 249 251;
+  --color-surface: 255 255 255;
+  --color-text-primary: 17 41 88;
+  --color-text-secondary: 84 100 123;
+  --color-border: 223 233 235;
+  --color-success: 10 122 71;
+  --color-warning: 143 99 0;
+  --color-danger: 184 74 67;
+  --color-info: 47 111 168;
+  --color-gold: 244 180 0;
+  --color-gold-dark: 143 99 0;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+    scroll-padding-top: 5rem;
+  }
+
+  body {
+    @apply min-h-screen bg-background font-sans text-ink antialiased;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    @apply text-ink;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-primary ring-offset-2 ring-offset-background;
+  }
+}

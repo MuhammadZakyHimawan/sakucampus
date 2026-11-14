@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="SakuCampus">
+  <rect width="64" height="64" rx="16" fill="#336799" />
+  <path d="M40 22a4 4 0 0 1 4-4h8v8h-8a4 4 0 0 1-4-4Z" fill="#E7F4F6" />
+  <path d="M20 18h18a12 12 0 0 1 0 24H20a4 4 0 0 1-4-4V22a4 4 0 0 1 4-4Z" fill="#FFFFFF" />
+  <circle cx="38" cy="30" r="4" fill="#F4B400" />
+</svg>

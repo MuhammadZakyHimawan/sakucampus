@@ -1,0 +1,1 @@
+"""SakuCampus backend application."""
