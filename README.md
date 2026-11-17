@@ -2,16 +2,19 @@
 
 SakuCampus adalah konsultan keuangan proaktif untuk mahasiswa: mencatat transaksi semudah chatting, lalu memantau kondisi keuangan tanpa perhitungan manual.
 
-Repositori ini berisi **website frontend MVP** (React + Vite + TypeScript) dan **backend FastAPI** dengan autentikasi JWT. PostgreSQL sudah disiapkan dengan 7 tabel, role aplikasi, dan baseline Alembic. Frontend masih memakai mock untuk data domain sampai tahap integrasi; Telegram Bot, NLP, dan Rule Engine belum diimplementasikan.
+Repositori ini berisi **website frontend MVP** (React + Vite + TypeScript) dan **backend FastAPI** dengan autentikasi JWT serta API domain (transaksi, anggaran, goals, notifikasi, pengaturan). PostgreSQL sudah disiapkan dengan 10 tabel, role aplikasi, dan migrasi Alembic. Frontend dapat berjalan dengan mock atau terhubung ke backend melalui `VITE_USE_MOCK_API`. Backend Telegram sudah mendukung linking via one-time token, webhook, dan pencatatan transaksi dari chat dengan parser regex; NLP dan Rule Engine belum diimplementasikan.
 
 Spesifikasi utama proyek: [`SAKUCAMPUS_MASTER_SPEC.md`](./SAKUCAMPUS_MASTER_SPEC.md).
 
 ## Status tahap
 
 - Tahap 0–7 frontend selesai: audit, fondasi, layout/routing, halaman publik, dashboard, transaksi/anggaran, goals/reports/notifikasi/pengaturan, responsive, dan QA.
-- Tahap database selesai: PostgreSQL, 7 tabel, 6 foreign key, trigger `updated_at`, role aplikasi, dan baseline Alembic.
+- Tahap database selesai: PostgreSQL, 10 tabel, foreign key, trigger `updated_at`, role aplikasi, dan 3 revisi Alembic.
 - Tahap backend autentikasi selesai: FastAPI, register/login/me/logout, JWT Bearer, seed akun demo, dan test.
-- Tahap berikutnya: API domain (transaksi, anggaran, dashboard, goals, notifikasi), integrasi frontend, Telegram, NLP, dan Rule Engine.
+- Tahap backend API domain selesai: transaksi, anggaran, goals + kontribusi, notifikasi, pengaturan keuangan, update profil, dan ubah password.
+- Tahap integrasi frontend selesai: login/register JWT, token Bearer, CRUD domain HTTP, dan fallback mock lewat `VITE_USE_MOCK_API`.
+- Tahap Telegram selesai di backend: status/linking token sekali pakai, webhook + secret, parser regex chat, idempotensi `update_id`, dan 3 endpoint frontend yang terhubung ke API. Aktivasi bot sungguhan menunggu kredensial.
+- Tahap berikutnya: kredensial + registrasi webhook bot, dataset NLP, Rule Engine, notifikasi otomatis, integration/E2E test, dan hardening sesi.
 
 ## Prasyarat
 
@@ -71,14 +74,32 @@ uv run uvicorn app.main:app --reload --port 8000
 - Dokumentasi OpenAPI: `http://localhost:8000/docs`
 - API prefix: `http://localhost:8000/api/v1`
 
-Endpoint autentikasi yang tersedia:
+Endpoint yang tersedia:
 
 | Method | Endpoint | Keterangan |
 | --- | --- | --- |
 | POST | `/api/v1/auth/register` | Registrasi dan langsung mendapat token |
 | POST | `/api/v1/auth/login` | Login dengan email dan password |
 | GET | `/api/v1/auth/me` | Profil user dari Bearer token |
+| PATCH | `/api/v1/auth/me` | Update nama, email, dan avatar |
+| POST | `/api/v1/auth/change-password` | Ubah password akun |
 | POST | `/api/v1/auth/logout` | Logout stateless (client membuang token) |
+| GET/POST | `/api/v1/transactions` | Daftar dan buat transaksi |
+| GET/PATCH/DELETE | `/api/v1/transactions/{id}` | Detail, ubah, dan hapus transaksi |
+| GET/POST | `/api/v1/budgets` | Daftar dan buat anggaran |
+| PATCH/DELETE | `/api/v1/budgets/{id}` | Ubah dan hapus anggaran |
+| GET/POST | `/api/v1/goals` | Daftar dan buat target tabungan |
+| PATCH/DELETE | `/api/v1/goals/{id}` | Ubah dan hapus target |
+| POST | `/api/v1/goals/{id}/contributions` | Tambah kontribusi target |
+| GET | `/api/v1/notifications` | Daftar notifikasi |
+| PATCH | `/api/v1/notifications/{id}/read` | Tandai satu notifikasi dibaca |
+| PATCH | `/api/v1/notifications/read-all` | Tandai semua notifikasi dibaca |
+| DELETE | `/api/v1/notifications/{id}` | Hapus notifikasi |
+| GET/PATCH | `/api/v1/settings/finance` | Baca dan ubah pengaturan keuangan |
+| GET | `/api/v1/telegram/status` | Status koneksi Telegram user aktif |
+| POST | `/api/v1/telegram/link-token` | Buat one-time link token + deep link bot |
+| DELETE | `/api/v1/telegram/unlink` | Putuskan koneksi Telegram |
+| POST | `/api/v1/telegram/webhook` | Terima update bot (butuh secret + kredensial) |
 | GET | `/health` | Status API dan koneksi database |
 
 ### Akun demo frontend & backend
@@ -88,7 +109,7 @@ Endpoint autentikasi yang tersedia:
 | Email    | `andi@example.com` |
 | Password | `demo1234`       |
 
-Kredensial yang sama dipakai oleh mock frontend dan seed backend. Autentikasi frontend masih simulasi; backend sudah memakai password bcrypt dan JWT. Halaman login frontend menyediakan tombol "Isi otomatis".
+Kredensial yang sama dipakai oleh mock frontend dan seed backend. Backend memakai password bcrypt dan JWT. Pada mode mock, halaman login menyediakan tombol "Isi otomatis"; pada mode HTTP, gunakan akun hasil seed atau registrasi.
 
 ## Script frontend
 
@@ -148,51 +169,69 @@ Dijalankan dari folder `backend`:
 
 Route student dilindungi `ProtectedRoute`; pengguna tanpa sesi diarahkan ke `/login`.
 
+## Mode mock dan mode backend
+
+Salin `frontend/.env.example` menjadi `frontend/.env`, lalu pilih salah satu mode:
+
+```env
+VITE_API_BASE_URL=http://localhost:8000/api/v1
+VITE_USE_MOCK_API=true
+```
+
+- `VITE_USE_MOCK_API=true` (default): seluruh data domain memakai mock dan `localStorage`. Cocok untuk demo tanpa database.
+- `VITE_USE_MOCK_API=false`: login/register, profil, password, transaksi, anggaran, goals, notifikasi, dan pengaturan keuangan memakai backend. Token JWT disimpan di `localStorage` dan dikirim sebagai Bearer token.
+- Setelah mengubah `.env`, restart `npm run dev` (atau build ulang).
+- Education dan simulasi Telegram tetap statis pada kedua mode.
+- Pada mode backend, jalankan seed agar akun dan data demo tersedia.
+
 ## Data demo & penyimpanan
 
-- Semua angka adalah **data contoh** dan ditandai di UI sebagai data demo.
-- Data transaksi, anggaran, goals, notifikasi, preferensi, dan status Telegram disimpan di `localStorage` agar interaksi bertahan selama sesi/browser.
-- Dataset transaksi & anggaran di-seed ulang otomatis setiap bulan agar periode demo tetap relevan.
-- Untuk mereset data demo: hapus seluruh data situs (Application → Local Storage) di browser, lalu muat ulang halaman.
-- Saldo dihitung dari `initialBalance + total income - total expense` (lihat `src/utils/calculations.ts`).
-- Mock data terpusat di `src/mocks/`, diakses melalui lapisan service di `src/services/`.
+- Mode mock menandai UI sebagai **Data demo**; mode backend menampilkan badge **Tersinkron**.
+- Pada mode mock, transaksi, anggaran, goals, notifikasi, preferensi, dan status Telegram disimpan di `localStorage`.
+- Dataset mock transaksi & anggaran di-seed ulang otomatis setiap bulan agar periode demo tetap relevan.
+- Untuk mereset data mock: hapus seluruh data situs (Application → Local Storage) di browser, lalu muat ulang halaman.
+- Saldo dihitung dari `initialBalance + total income - total expense` (lihat `src/utils/calculations.ts`), baik dari mock maupun data backend.
+- Mock data terpusat di `src/mocks/`, diakses melalui lapisan service di `src/services/` yang memilih mock atau HTTP.
 
-## Integrasi yang masih simulasi
+## Status integrasi
 
-| Fitur                | Kondisi saat ini                                                        |
-| -------------------- | ----------------------------------------------------------------------- |
-| Autentikasi          | Backend JWT siap di `/api/v1/auth/*`; frontend masih mock                |
-| Transaksi & anggaran | Mock service + localStorage, validasi dan CRUD berfungsi                |
-| Dashboard & laporan  | Dihitung dari dataset mock yang sama                                    |
-| Notifikasi           | Data mock + status baca/tandai di localStorage                          |
-| Telegram             | Simulasi hubungkan/putuskan; tidak ada bot atau webhook nyata           |
-| Ubah password        | Simulasi; kredensial demo tidak berubah                                 |
-| Backend/API          | FastAPI auth + health tersedia; API domain belum                        |
+| Fitur                | Mode mock                                   | Mode backend                                      |
+| -------------------- | ------------------------------------------- | ------------------------------------------------- |
+| Autentikasi          | Simulasi akun demo                          | JWT Bearer + bcrypt                               |
+| Profil & password    | Perubahan sesi di `localStorage`            | `PATCH /auth/me` dan `POST /auth/change-password` |
+| Transaksi & anggaran | Mock service + `localStorage`               | CRUD API dengan scoping per user                  |
+| Goals                | Mock + progres lokal                        | CRUD + endpoint kontribusi                        |
+| Notifikasi           | Mock + status baca lokal                    | List/baca/hapus dari API                          |
+| Pengaturan keuangan  | Preferensi lokal                            | `GET/PATCH /settings/finance`                     |
+| Dashboard & laporan  | Dihitung client-side dari dataset aktif      | Dihitung client-side dari data API                |
+| Telegram             | Simulasi lokal (`localStorage`)              | Status/linking/unlink via API; webhook + parser chat aktif setelah bot dikonfigurasi |
+| Education            | Konten statis                               | Tetap statis                                      |
 
-## Persiapan integrasi backend
+### Mode Telegram
 
-- Salin `frontend/.env.example` menjadi `frontend/.env` bila ingin mengatur variabel.
-- `VITE_API_BASE_URL` — base URL API (default `http://localhost:8000/api/v1`).
-- `VITE_USE_MOCK_API` — `true` (default) memakai mock service; `false` disiapkan untuk integrasi HTTP.
-- Helper HTTP bertipe tersedia di `frontend/src/services/api-client.ts` (`apiRequest`, `ApiError`).
-- Backend auth sudah dapat dipanggil di `http://localhost:8000/api/v1/auth/*`.
-- Service domain saat ini masih mock; penggantian ke HTTP dapat dilakukan tanpa mengubah komponen karena kontrak fungsi dan tipe data sudah dipisahkan.
+- Tanpa kredensial bot, backend mengembalikan `simulated: true`; frontend menampilkan label **Simulasi** dan tidak membuat tautan palsu. Mode mock tetap bisa dipakai untuk demo lokal.
+- Isi `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, `TELEGRAM_WEBHOOK_SECRET`, dan `TELEGRAM_LINK_TOKEN_MINUTES` di `backend/.env` (semua sudah ada di `.env.example`). Jangan commit nilai ini.
+- Daftarkan webhook ke Telegram setelah URL HTTPS publik tersedia, dengan header `X-Telegram-Bot-Api-Secret-Token` yang sama dengan `TELEGRAM_WEBHOOK_SECRET`.
+- Format chat yang dikenali parser regex: `makan ayam 20rb`, `beli kopi 15 ribu`, `bayar kos 750000`, `uang saku 500rb`, `beasiswa 1,5jt`. Satu pesan = satu transaksi; transfer belum didukung.
+- Transaksi hasil chat tersimpan dengan `source: "telegram"` dan ditandai **Telegram** pada daftar transaksi. `update_id` webhook dicatat agar retry Telegram tidak membuat duplikat.
+
+Catatan keamanan: mode backend menyimpan token JWT di `localStorage` untuk kebutuhan MVP. Untuk production, pertimbangkan cookie `HttpOnly` dan mekanisme refresh/revocation.
 
 ## Struktur folder
 
 ```text
 backend/
 ├── app/
-│   ├── api/v1/        # Router auth dan health
-│   ├── core/          # Security, dependency, JWT
-│   ├── models/        # 7 model SQLAlchemy
+│   ├── api/v1/        # Router auth, transaksi, anggaran, goals, notifikasi, settings
+│   ├── core/          # Security, dependency, JWT, kategori
+│   ├── models/        # 10 model SQLAlchemy
 │   ├── schemas/       # Pydantic schema camelCase
-│   ├── scripts/       # Seed demo
-│   ├── services/      # Auth service
+│   ├── scripts/       # Seed akun + data domain demo
+│   ├── services/      # Auth, transaksi, anggaran, goals, notifikasi, settings
 │   ├── config.py
 │   ├── database.py
 │   └── main.py
-├── migrations/        # Baseline Alembic
+├── migrations/        # 3 revisi Alembic (baseline, Telegram, idempotensi)
 ├── tests/
 ├── alembic.ini
 └── pyproject.toml
@@ -224,9 +263,12 @@ frontend/
 - Saldo awal akun demo: Rp1.000.000; batas saldo minimum: Rp250.000.
 - Transfer internal tidak dihitung sebagai pengeluaran konsumtif atau pemasukan baru.
 - Konten Edukasi bersifat statis dan ditandai sebagai contoh.
-- Mock auth frontend, penyimpanan localStorage, dan simulasi Telegram **bukan** untuk production.
+- Mode mock frontend, penyimpanan `localStorage`, dan simulasi Telegram **bukan** untuk production.
 - Logout backend bersifat stateless; token tetap valid sampai kedaluwarsa (24 jam).
-- Endpoint domain masih memakai mock frontend; integrasi HTTP dikerjakan setelah API domain tersedia.
+- Token disimpan di `localStorage`; belum ada refresh token atau revocation server-side.
+- Dashboard dan laporan tetap dihitung di client dari transaksi/anggaran yang dimuat dari API.
+- Tanggal transaksi chat mengikuti tanggal server backend (UTC), bukan timezone Telegram user.
+- Kategori chat dipilih dari peta keyword deterministik; untuk teks yang tidak dikenali, kategorinya `Lainnya` dan pesan gagal diberi contoh format.
 
 ## Verifikasi kualitas
 
@@ -250,12 +292,12 @@ uv run pytest
 uv run alembic current
 ```
 
-Unit test frontend mencakup perhitungan keuangan, periode, format/serialisasi, service transaksi/anggaran/goals/settings/analytics, komponen loading, api-client, serta smoke test rute dan proteksi login. Test backend mencakup health, register, login, token expiry, `/me`, logout, duplikasi email, validasi input, dan hashing password.
+Unit test frontend mencakup perhitungan keuangan, periode, format/serialisasi, service transaksi/anggaran/goals/settings/analytics/telegram (mode mock dan HTTP), komponen loading, api-client, serta smoke test rute dan proteksi login. Test backend mencakup health, auth (register/login/token/`/me`/logout/profil/password), CRUD transaksi, anggaran + konflik periode, goals + kontribusi, notifikasi, pengaturan keuangan, scoping antar-user, validasi input, parser regex chat, linking/webhook Telegram, dan idempotensi `update_id`.
 
 ## Pekerjaan berikutnya
 
-1. API transaksi, anggaran, dashboard, goals, dan notifikasi.
-2. Integrasi frontend ke API menggunakan `api-client.ts`.
-3. Telegram Bot, webhook, dan one-time link token.
-4. Dataset transaksi mahasiswa, training NLP, dan Rule Engine.
-5. Integration test dan user acceptance test.
+1. Isi kredensial bot + daftarkan webhook, lalu uji deep link dan pencatatan transaksi sungguhan.
+2. Dataset transaksi mahasiswa, training NLP, dan Rule Engine (pengganti/lanjutan parser regex).
+3. Generator notifikasi otomatis dari anggaran/saldo/target, termasuk pengiriman ke Telegram.
+4. Integration test frontend–backend dan user acceptance test (E2E).
+5. Hardening keamanan sesi (refresh token/revocation) dan deployment.
