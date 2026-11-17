@@ -29,6 +29,7 @@ import { StatCard } from '@/components/ui/StatCard';
 import { useToast } from '@/components/ui/toast-context';
 import { useFinanceData } from '@/hooks/finance-data-context';
 import { TRANSACTION_TYPE_LABELS } from '@/lib/categories';
+import { MOCK_API_ENABLED } from '@/lib/config';
 import { DEFAULT_DASHBOARD_PERIOD, NO_REPORTS_MESSAGE } from '@/lib/constants';
 import { buildReportData } from '@/services/analytics.service';
 import type { PeriodPreset } from '@/types';
@@ -168,7 +169,9 @@ export function ReportsPage() {
         description="Analisis pemasukan, pengeluaran, dan arus kas pada periode terpilih."
         actions={
           <>
-            <Badge variant="primary">Data demo</Badge>
+            <Badge variant={MOCK_API_ENABLED ? 'primary' : 'success'}>
+              {MOCK_API_ENABLED ? 'Data demo' : 'Tersinkron'}
+            </Badge>
             <PeriodFilter
               value={period}
               onChange={setPeriod}

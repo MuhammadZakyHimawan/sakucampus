@@ -1,5 +1,7 @@
 import { EXPENSE_CATEGORIES } from '@/lib/categories';
+import { MOCK_API_ENABLED } from '@/lib/config';
 import type { Budget, BudgetInput, ExpenseCategory } from '@/types';
+import { apiRequest } from './api-client';
 import { createId, loadDataset, saveDataset } from './data-store';
 
 const MOCK_DELAY = 300;
@@ -29,12 +31,23 @@ function validateBudgetInput(input: BudgetInput): void {
 }
 
 export async function getBudgets(): Promise<Budget[]> {
+  if (!MOCK_API_ENABLED) {
+    return apiRequest<Budget[]>('/budgets');
+  }
+
   await wait(MOCK_DELAY);
 
   return loadDataset().budgets;
 }
 
 export async function createBudget(input: BudgetInput): Promise<Budget> {
+  if (!MOCK_API_ENABLED) {
+    return apiRequest<Budget>('/budgets', {
+      method: 'POST',
+      body: input,
+    });
+  }
+
   await wait(MOCK_DELAY);
   validateBudgetInput(input);
 
@@ -65,6 +78,13 @@ export async function updateBudget(
   id: string,
   input: BudgetInput,
 ): Promise<Budget> {
+  if (!MOCK_API_ENABLED) {
+    return apiRequest<Budget>(`/budgets/${id}`, {
+      method: 'PATCH',
+      body: input,
+    });
+  }
+
   await wait(MOCK_DELAY);
   validateBudgetInput(input);
 
@@ -99,6 +119,11 @@ export async function updateBudget(
 }
 
 export async function deleteBudget(id: string): Promise<void> {
+  if (!MOCK_API_ENABLED) {
+    await apiRequest<void>(`/budgets/${id}`, { method: 'DELETE' });
+    return;
+  }
+
   await wait(MOCK_DELAY);
 
   const dataset = loadDataset();

@@ -1,6 +1,7 @@
-import { STORAGE_KEYS } from '@/lib/config';
+import { MOCK_API_ENABLED, STORAGE_KEYS } from '@/lib/config';
 import { mockGoals } from '@/mocks/goals';
 import type { Goal, GoalInput } from '@/types';
+import { apiRequest } from './api-client';
 import { createId } from './data-store';
 import { readJson, writeJson } from './local-storage';
 
@@ -59,6 +60,10 @@ function validateGoalInput(input: GoalInput): void {
 }
 
 export async function getGoals(): Promise<Goal[]> {
+  if (!MOCK_API_ENABLED) {
+    return apiRequest<Goal[]>('/goals');
+  }
+
   await wait(MOCK_DELAY);
 
   return [...loadGoals()].sort((first, second) =>
@@ -67,6 +72,13 @@ export async function getGoals(): Promise<Goal[]> {
 }
 
 export async function createGoal(input: GoalInput): Promise<Goal> {
+  if (!MOCK_API_ENABLED) {
+    return apiRequest<Goal>('/goals', {
+      method: 'POST',
+      body: input,
+    });
+  }
+
   await wait(MOCK_DELAY);
   validateGoalInput(input);
 
@@ -88,6 +100,13 @@ export async function updateGoal(
   id: string,
   input: GoalInput,
 ): Promise<Goal> {
+  if (!MOCK_API_ENABLED) {
+    return apiRequest<Goal>(`/goals/${id}`, {
+      method: 'PATCH',
+      body: input,
+    });
+  }
+
   await wait(MOCK_DELAY);
   validateGoalInput(input);
 
@@ -116,6 +135,13 @@ export async function addGoalContribution(
   id: string,
   amount: number,
 ): Promise<Goal> {
+  if (!MOCK_API_ENABLED) {
+    return apiRequest<Goal>(`/goals/${id}/contributions`, {
+      method: 'POST',
+      body: { amount },
+    });
+  }
+
   await wait(MOCK_DELAY);
 
   if (!Number.isInteger(amount) || amount <= 0) {
@@ -142,6 +168,11 @@ export async function addGoalContribution(
 }
 
 export async function deleteGoal(id: string): Promise<void> {
+  if (!MOCK_API_ENABLED) {
+    await apiRequest<void>(`/goals/${id}`, { method: 'DELETE' });
+    return;
+  }
+
   await wait(MOCK_DELAY);
 
   const goals = loadGoals();

@@ -9,7 +9,11 @@ export interface AuthContextValue {
   login: (email: string, password: string) => Promise<User>;
   register: (input: RegisterInput) => Promise<User>;
   logout: () => void;
-  updateProfile: (updates: UserUpdate) => User;
+  updateProfile: (updates: UserUpdate) => Promise<User>;
+  changePassword: (
+    currentPassword: string,
+    newPassword: string,
+  ) => Promise<void>;
 }
 
 export const AuthContext = createContext<AuthContextValue | null>(null);

@@ -2,13 +2,14 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { MOCK_API_ENABLED } from '@/lib/config';
 import type { User } from '@/types';
 import { profileSchema } from '../schemas';
 import type { ProfileFormValues } from '../schemas';
 
 export interface ProfileFormProps {
   user: User;
-  onSubmit: (values: ProfileFormValues) => void;
+  onSubmit: (values: ProfileFormValues) => Promise<void> | void;
 }
 
 export function ProfileForm({ user, onSubmit }: ProfileFormProps) {
@@ -51,7 +52,11 @@ export function ProfileForm({ user, onSubmit }: ProfileFormProps) {
         label="Email"
         type="email"
         autoComplete="email"
-        hint="Email pada profil demo tidak mengubah kredensial login."
+        hint={
+          MOCK_API_ENABLED
+            ? 'Email pada profil demo tidak mengubah kredensial login.'
+            : 'Email ini juga digunakan untuk login.'
+        }
         error={errors.email?.message}
         {...register('email')}
       />

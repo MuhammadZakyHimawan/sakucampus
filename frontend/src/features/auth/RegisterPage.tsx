@@ -8,6 +8,7 @@ import { Checkbox } from '@/components/ui/Checkbox';
 import { Input } from '@/components/ui/Input';
 import { PasswordInput } from '@/components/ui/PasswordInput';
 import { useToast } from '@/components/ui/toast-context';
+import { MOCK_API_ENABLED } from '@/lib/config';
 import { useAuth } from './auth-context';
 import { AuthCard } from './AuthCard';
 import { registerSchema } from './schemas';
@@ -47,7 +48,9 @@ export function RegisterPage() {
         password: values.password,
       });
       toast({
-        title: 'Akun demo berhasil dibuat',
+        title: MOCK_API_ENABLED
+          ? 'Akun demo berhasil dibuat'
+          : 'Pendaftaran berhasil',
         description: `Selamat datang, ${values.name.trim()}.`,
         variant: 'success',
       });
@@ -69,7 +72,11 @@ export function RegisterPage() {
   return (
     <AuthCard
       title="Daftar akun"
-      description="Buat akun demo untuk mencoba seluruh fitur SakuCampus."
+      description={
+        MOCK_API_ENABLED
+          ? 'Buat akun demo untuk mencoba seluruh fitur SakuCampus.'
+          : 'Buat akun SakuCampus untuk mulai mengelola keuanganmu.'
+      }
       footer={
         <>
           Sudah punya akun?{' '}
@@ -135,9 +142,10 @@ export function RegisterPage() {
           Daftar
         </Button>
 
-        <Alert variant="info">
-          Pendaftaran ini simulasi. Akun hanya berlaku pada sesi ini dan
-          password tidak disimpan.
+        <Alert variant={MOCK_API_ENABLED ? 'info' : 'success'}>
+          {MOCK_API_ENABLED
+            ? 'Pendaftaran ini simulasi. Akun hanya berlaku pada sesi ini dan password tidak disimpan.'
+            : 'Akunmu langsung aktif dan data keuangan akan tersimpan di server.'}
         </Alert>
 
         <p className="flex items-start gap-2 text-xs leading-relaxed text-ink-secondary">
@@ -145,8 +153,9 @@ export function RegisterPage() {
             className="mt-0.5 h-4 w-4 shrink-0 text-primary"
             aria-hidden="true"
           />
-          Pendaftaran belum terhubung ke backend, email verifikasi, atau sistem
-          keamanan production.
+          {MOCK_API_ENABLED
+            ? 'Pendaftaran belum terhubung ke backend, email verifikasi, atau sistem keamanan production.'
+            : 'Password disimpan dalam bentuk hash. Email verifikasi belum tersedia pada versi ini.'}
         </p>
       </form>
     </AuthCard>

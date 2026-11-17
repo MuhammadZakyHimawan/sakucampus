@@ -11,6 +11,7 @@ import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatCard } from '@/components/ui/StatCard';
 import { useToast } from '@/components/ui/toast-context';
+import { MOCK_API_ENABLED } from '@/lib/config';
 import { NO_GOALS_MESSAGE } from '@/lib/constants';
 import {
   addGoalContribution,
@@ -207,7 +208,9 @@ export function GoalsPage() {
         description="Rencanakan tujuan keuangan dan pantau progres tabunganmu."
         actions={
           <>
-            <Badge variant="primary">Data demo</Badge>
+            <Badge variant={MOCK_API_ENABLED ? 'primary' : 'success'}>
+              {MOCK_API_ENABLED ? 'Data demo' : 'Tersinkron'}
+            </Badge>
             <Button onClick={openCreateForm}>
               <Plus className="h-4 w-4" aria-hidden="true" />
               Tambah Target

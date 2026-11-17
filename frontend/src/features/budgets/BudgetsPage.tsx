@@ -22,6 +22,7 @@ import { StatCard } from '@/components/ui/StatCard';
 import { useToast } from '@/components/ui/toast-context';
 import { useFinanceData } from '@/hooks/finance-data-context';
 import { EXPENSE_CATEGORIES } from '@/lib/categories';
+import { MOCK_API_ENABLED } from '@/lib/config';
 import { NO_BUDGETS_MESSAGE } from '@/lib/constants';
 import type { Budget, BudgetInput, ExpenseCategory } from '@/types';
 import { computeBudgetUsage, getBudgetStatus } from '@/utils/calculations';
@@ -179,7 +180,9 @@ export function BudgetsPage() {
         description="Atur batas pengeluaran per kategori dan pantau realisasinya."
         actions={
           <>
-            <Badge variant="primary">Data demo</Badge>
+            <Badge variant={MOCK_API_ENABLED ? 'primary' : 'success'}>
+              {MOCK_API_ENABLED ? 'Data demo' : 'Tersinkron'}
+            </Badge>
             <Button onClick={openCreateForm} disabled={!canAddBudget}>
               <Plus className="h-4 w-4" aria-hidden="true" />
               Tambah Anggaran

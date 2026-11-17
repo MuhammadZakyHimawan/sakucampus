@@ -1,3 +1,5 @@
+import { getStoredToken } from './session-storage';
+
 const DEFAULT_API_BASE_URL = 'http://localhost:8000/api/v1';
 
 export class ApiError extends Error {
@@ -101,6 +103,12 @@ export async function apiRequest<T>(
 
   if (body !== undefined) {
     headers.set('Content-Type', 'application/json');
+  }
+
+  const token = getStoredToken();
+
+  if (token && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${token}`);
   }
 
   let response: Response;

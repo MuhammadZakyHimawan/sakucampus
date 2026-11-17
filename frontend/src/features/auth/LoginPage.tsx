@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { PasswordInput } from '@/components/ui/PasswordInput';
 import { useToast } from '@/components/ui/toast-context';
+import { MOCK_API_ENABLED } from '@/lib/config';
 import { DEMO_CREDENTIALS } from '@/mocks/users';
 import { useAuth } from './auth-context';
 import { AuthCard } from './AuthCard';
@@ -75,7 +76,11 @@ export function LoginPage() {
   return (
     <AuthCard
       title="Masuk ke SakuCampus"
-      description="Gunakan akun demo untuk melanjutkan. Akun hasil registrasi hanya aktif selama sesi berlangsung."
+      description={
+        MOCK_API_ENABLED
+          ? 'Gunakan akun demo untuk melanjutkan. Akun hasil registrasi hanya aktif selama sesi berlangsung.'
+          : 'Masuk dengan email dan password akun SakuCampusmu.'
+      }
       footer={
         <>
           Belum punya akun?{' '}
@@ -96,33 +101,35 @@ export function LoginPage() {
       }
     >
       <form className="flex flex-col gap-4" onSubmit={onSubmit} noValidate>
-        <div className="rounded-lg border border-border bg-background p-4 text-sm">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="font-semibold text-ink">Akun demo</p>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={fillDemoCredentials}
-              className="-my-1 px-2"
-            >
-              <Wand2 className="h-3.5 w-3.5" aria-hidden="true" />
-              Isi otomatis
-            </Button>
+        {MOCK_API_ENABLED ? (
+          <div className="rounded-lg border border-border bg-background p-4 text-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="font-semibold text-ink">Akun demo</p>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={fillDemoCredentials}
+                className="-my-1 px-2"
+              >
+                <Wand2 className="h-3.5 w-3.5" aria-hidden="true" />
+                Isi otomatis
+              </Button>
+            </div>
+            <p className="mt-1 text-ink-secondary">
+              Email:{' '}
+              <span className="font-medium text-ink">
+                {DEMO_CREDENTIALS.email}
+              </span>
+            </p>
+            <p className="text-ink-secondary">
+              Password:{' '}
+              <span className="font-medium text-ink">
+                {DEMO_CREDENTIALS.password}
+              </span>
+            </p>
           </div>
-          <p className="mt-1 text-ink-secondary">
-            Email:{' '}
-            <span className="font-medium text-ink">
-              {DEMO_CREDENTIALS.email}
-            </span>
-          </p>
-          <p className="text-ink-secondary">
-            Password:{' '}
-            <span className="font-medium text-ink">
-              {DEMO_CREDENTIALS.password}
-            </span>
-          </p>
-        </div>
+        ) : null}
 
         {errors.root?.message ? (
           <Alert variant="danger">{errors.root.message}</Alert>
@@ -158,8 +165,9 @@ export function LoginPage() {
             className="mt-0.5 h-4 w-4 shrink-0 text-primary"
             aria-hidden="true"
           />
-          Simulasi — autentikasi belum terhubung ke backend dan bukan sistem
-          keamanan production.
+          {MOCK_API_ENABLED
+            ? 'Simulasi — autentikasi belum terhubung ke backend dan bukan sistem keamanan production.'
+            : 'Sesi login diamankan dengan token akses. Jangan bagikan password kepada siapa pun.'}
         </p>
       </form>
     </AuthCard>

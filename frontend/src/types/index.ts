@@ -128,6 +128,15 @@ export interface TelegramStatus {
   connected: boolean;
   username?: string;
   linkedAt?: string;
+  botUsername?: string;
+  simulated?: boolean;
+}
+
+export interface TelegramLinkToken {
+  token: string;
+  deepLink?: string;
+  expiresAt: string;
+  botUsername?: string;
   simulated?: boolean;
 }
 

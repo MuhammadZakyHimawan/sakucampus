@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { Coins, Landmark, Save, Settings2, Wallet } from 'lucide-react';
@@ -13,25 +14,42 @@ import {
 } from '@/components/ui/Card';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { Input } from '@/components/ui/Input';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { useToast } from '@/components/ui/toast-context';
 import { useAuth } from '@/features/auth/auth-context';
 import { DEMO_USER } from '@/mocks/users';
+import { MOCK_API_ENABLED } from '@/lib/config';
 import { PERIOD_OPTIONS } from '@/lib/constants';
 import {
-  getFinancePreferences,
-  saveFinancePreferences,
+  createFinanceSettings,
+  getFinanceSettings,
+  updateFinanceSettings,
 } from '@/services/settings.service';
+import type { FinanceSettings } from '@/types';
 import { formatCurrency } from '@/utils/currency';
 import { financeSettingsSchema } from './schemas';
 import type { FinanceSettingsFormValues } from './schemas';
+
+function toFormValues(
+  settings: FinanceSettings,
+): FinanceSettingsFormValues {
+  return {
+    initialBalance: settings.initialBalance,
+    minBalance: settings.minBalance,
+    period: settings.period,
+    notifyBudget: settings.notifyBudget,
+    notifyBalance: settings.notifyBalance,
+    notifyGoal: settings.notifyGoal,
+  };
+}
 
 export function FinanceSettingsPage() {
   const { user, updateProfile } = useAuth();
   const { toast } = useToast();
   const activeUser = user ?? DEMO_USER;
-  const preferences = getFinancePreferences();
+  const [isLoading, setIsLoading] = useState(true);
   const {
     register,
     handleSubmit,
@@ -40,38 +58,68 @@ export function FinanceSettingsPage() {
     formState: { errors, isSubmitting },
   } = useForm<FinanceSettingsFormValues>({
     resolver: zodResolver(financeSettingsSchema),
-    defaultValues: {
-      initialBalance: activeUser.initialBalance,
-      minBalance: activeUser.minBalance,
-      period: preferences.period,
-      notifyBudget: preferences.notifyBudget,
-      notifyBalance: preferences.notifyBalance,
-      notifyGoal: preferences.notifyGoal,
-    },
+    defaultValues: toFormValues(createFinanceSettings(activeUser)),
   });
 
   const initialBalance = watch('initialBalance');
   const minBalance = watch('minBalance');
 
-  const onSubmit = (values: FinanceSettingsFormValues) => {
-    updateProfile({
-      initialBalance: values.initialBalance,
-      minBalance: values.minBalance,
-      currency: 'IDR',
-    });
-    saveFinancePreferences({
-      period: values.period,
-      notifyBudget: values.notifyBudget,
-      notifyBalance: values.notifyBalance,
-      notifyGoal: values.notifyGoal,
-    });
-    reset(values);
-    toast({
-      title: 'Pengaturan disimpan',
-      description:
-        'Saldo, batas minimum, dan preferensi keuangan telah diperbarui.',
-      variant: 'success',
-    });
+  useEffect(() => {
+    let isActive = true;
+
+    getFinanceSettings(createFinanceSettings(activeUser))
+      .then((settings) => {
+        if (isActive) {
+          reset(toFormValues(settings));
+        }
+      })
+      .catch((loadError: unknown) => {
+        if (isActive) {
+          toast({
+            title: 'Gagal memuat pengaturan',
+            description:
+              loadError instanceof Error
+                ? loadError.message
+                : 'Silakan coba lagi.',
+            variant: 'error',
+          });
+        }
+      })
+      .finally(() => {
+        if (isActive) {
+          setIsLoading(false);
+        }
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [activeUser, reset, toast]);
+
+  const onSubmit = async (values: FinanceSettingsFormValues) => {
+    try {
+      const saved = await updateFinanceSettings(values);
+
+      await updateProfile({
+        initialBalance: saved.initialBalance,
+        minBalance: saved.minBalance,
+        currency: saved.currency,
+      });
+      reset(toFormValues(saved));
+      toast({
+        title: 'Pengaturan disimpan',
+        description:
+          'Saldo, batas minimum, dan preferensi keuangan telah diperbarui.',
+        variant: 'success',
+      });
+    } catch (saveError) {
+      toast({
+        title: 'Gagal menyimpan pengaturan',
+        description:
+          saveError instanceof Error ? saveError.message : 'Silakan coba lagi.',
+        variant: 'error',
+      });
+    }
   };
 
   return (
@@ -79,14 +127,31 @@ export function FinanceSettingsPage() {
       <PageHeader
         title="Pengaturan Keuangan"
         description="Atur saldo awal, batas saldo minimum, dan preferensi keuangan lainnya."
-        actions={<Badge variant="primary">Data demo</Badge>}
+        actions={
+          <Badge variant={MOCK_API_ENABLED ? 'primary' : 'success'}>
+            {MOCK_API_ENABLED ? 'Data demo' : 'Tersinkron'}
+          </Badge>
+        }
       />
 
-      <Alert variant="info" title="Berlaku untuk data demo">
-        Saldo awal dan batas minimum langsung memengaruhi ringkasan pada
-        dashboard. Semua nilai disimpan di penyimpanan lokal browser.
+      <Alert
+        variant="info"
+        title={
+          MOCK_API_ENABLED
+            ? 'Berlaku untuk data demo'
+            : 'Tersinkron dengan akunmu'
+        }
+      >
+        {MOCK_API_ENABLED
+          ? 'Saldo awal dan batas minimum langsung memengaruhi ringkasan pada dashboard. Semua nilai disimpan di penyimpanan lokal browser.'
+          : 'Saldo awal dan batas minimum langsung memengaruhi ringkasan pada dashboard. Pengaturan disimpan ke server dan berlaku di semua perangkat.'}
       </Alert>
 
+      {isLoading ? (
+        <Card>
+          <LoadingState message="Memuat pengaturan keuangan..." />
+        </Card>
+      ) : (
       <form
         onSubmit={handleSubmit(onSubmit)}
         className="grid gap-4 xl:grid-cols-3"
@@ -101,7 +166,9 @@ export function FinanceSettingsPage() {
               <div>
                 <CardTitle>Saldo dan Periode</CardTitle>
                 <CardDescription>
-                  Sesuaikan dasar perhitungan kondisi keuangan demo.
+                  {MOCK_API_ENABLED
+                    ? 'Sesuaikan dasar perhitungan kondisi keuangan demo.'
+                    : 'Sesuaikan dasar perhitungan kondisi keuanganmu.'}
                 </CardDescription>
               </div>
             </div>
@@ -228,8 +295,9 @@ export function FinanceSettingsPage() {
               <Landmark className="h-5 w-5" aria-hidden="true" />
             </span>
             <p className="text-sm text-ink-secondary">
-              Pengaturan disimpan otomatis ke browser setelah tombol simpan
-              ditekan.
+              {MOCK_API_ENABLED
+                ? 'Pengaturan disimpan ke penyimpanan lokal setelah tombol simpan ditekan.'
+                : 'Pengaturan disimpan ke akunmu setelah tombol simpan ditekan.'}
             </p>
           </div>
           <Button type="submit" isLoading={isSubmitting}>
@@ -238,6 +306,7 @@ export function FinanceSettingsPage() {
           </Button>
         </div>
       </form>
+      )}
     </div>
   );
 }

@@ -21,6 +21,8 @@ import {
   NO_NOTIFICATIONS_MESSAGE,
   NO_UNREAD_NOTIFICATIONS_MESSAGE,
 } from '@/lib/constants';
+import { useAuth } from '@/features/auth/auth-context';
+import { DEMO_USER } from '@/mocks/users';
 import {
   deleteNotification,
   getNotifications,
@@ -28,8 +30,10 @@ import {
   markNotificationRead,
 } from '@/services/notifications.service';
 import {
+  createFinanceSettings,
   getFinancePreferences,
-  saveFinancePreferences,
+  getFinanceSettings,
+  updateFinancePreferences,
 } from '@/services/settings.service';
 import type {
   AppNotification,
@@ -95,7 +99,9 @@ function isNotificationEnabled(
 
 export function NotificationsPage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const { toast } = useToast();
+  const activeUser = user ?? DEMO_USER;
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [preferences, setPreferences] = useState<FinancePreferences>(() =>
     getFinancePreferences(),
@@ -108,10 +114,19 @@ export function NotificationsPage() {
   useEffect(() => {
     let isActive = true;
 
-    getNotifications()
-      .then((data) => {
+    Promise.all([
+      getNotifications(),
+      getFinanceSettings(createFinanceSettings(activeUser)),
+    ])
+      .then(([data, settings]) => {
         if (isActive) {
           setNotifications(data);
+          setPreferences({
+            period: settings.period,
+            notifyBudget: settings.notifyBudget,
+            notifyBalance: settings.notifyBalance,
+            notifyGoal: settings.notifyGoal,
+          });
           setError(null);
         }
       })
@@ -133,7 +148,7 @@ export function NotificationsPage() {
     return () => {
       isActive = false;
     };
-  }, []);
+  }, [activeUser]);
 
   const visibleNotifications = useMemo(
     () =>
@@ -151,17 +166,31 @@ export function NotificationsPage() {
       ? visibleNotifications.filter((notification) => !notification.read)
       : visibleNotifications;
 
-  const updatePreference = (
+  const updatePreference = async (
     key: keyof Pick<
       FinancePreferences,
       'notifyBudget' | 'notifyBalance' | 'notifyGoal'
     >,
     checked: boolean,
   ) => {
+    const previousPreferences = preferences;
     const nextPreferences = { ...preferences, [key]: checked };
 
     setPreferences(nextPreferences);
-    saveFinancePreferences(nextPreferences);
+
+    try {
+      const saved = await updateFinancePreferences(nextPreferences);
+
+      setPreferences(saved);
+    } catch (saveError) {
+      setPreferences(previousPreferences);
+      toast({
+        title: 'Gagal menyimpan preferensi',
+        description:
+          saveError instanceof Error ? saveError.message : 'Silakan coba lagi.',
+        variant: 'error',
+      });
+    }
   };
 
   const handleMarkRead = async (notification: AppNotification) => {
@@ -313,9 +342,9 @@ export function NotificationsPage() {
                 </span>
               }
               checked={preferences[item.key]}
-              onChange={(event) =>
-                updatePreference(item.key, event.target.checked)
-              }
+              onChange={(event) => {
+                void updatePreference(item.key, event.target.checked);
+              }}
             />
           ))}
           {hiddenByPreferenceCount > 0 ? (

@@ -11,6 +11,7 @@ export const MOCK_API_ENABLED = import.meta.env.VITE_USE_MOCK_API !== 'false';
 
 export const STORAGE_KEYS = {
   auth: 'sakucampus.auth.v1',
+  token: 'sakucampus.token.v1',
   profile: 'sakucampus.profile.v1',
   data: 'sakucampus.data.v1',
   preferences: 'sakucampus.preferences.v1',

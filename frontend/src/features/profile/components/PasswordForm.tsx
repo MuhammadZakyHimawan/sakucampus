@@ -27,8 +27,12 @@ export function PasswordForm({ onSubmit }: PasswordFormProps) {
   return (
     <form
       onSubmit={handleSubmit(async (values) => {
-        await onSubmit(values);
-        reset();
+        try {
+          await onSubmit(values);
+          reset();
+        } catch {
+          return;
+        }
       })}
       className="flex flex-col gap-4"
       noValidate

@@ -9,6 +9,7 @@ import { PeriodFilter } from '@/components/ui/PeriodFilter';
 import { useAuth } from '@/features/auth/auth-context';
 import { useFinanceData } from '@/hooks/finance-data-context';
 import { DEMO_USER } from '@/mocks/users';
+import { MOCK_API_ENABLED } from '@/lib/config';
 import { buildDashboardData } from '@/services/analytics.service';
 import { getFinancePreferences } from '@/services/settings.service';
 import type { PeriodPreset } from '@/types';
@@ -45,7 +46,9 @@ export function DashboardPage() {
         )} – ${formatDate(dashboard.range.end)}.`}
         actions={
           <>
-            <Badge variant="primary">Data demo</Badge>
+            <Badge variant={MOCK_API_ENABLED ? 'primary' : 'success'}>
+              {MOCK_API_ENABLED ? 'Data demo' : 'Tersinkron'}
+            </Badge>
             <PeriodFilter value={period} onChange={setPeriod} />
           </>
         }

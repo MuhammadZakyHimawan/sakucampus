@@ -1,11 +1,12 @@
 import { useCallback, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
+  changePassword as changePasswordRequest,
   getStoredUser,
   login as loginRequest,
   logout as logoutRequest,
   register as registerRequest,
-  updateStoredUser,
+  updateProfile as updateProfileRequest,
 } from '@/services/auth.service';
 import type { UserUpdate } from '@/services/auth.service';
 import type { RegisterInput, User } from '@/types';
@@ -38,12 +39,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }, []);
 
-  const updateProfile = useCallback((updates: UserUpdate) => {
-    const updatedUser = updateStoredUser(updates);
+  const updateProfile = useCallback(async (updates: UserUpdate) => {
+    const updatedUser = await updateProfileRequest(updates);
     setUser(updatedUser);
 
     return updatedUser;
   }, []);
+
+  const changePassword = useCallback(
+    async (currentPassword: string, newPassword: string) => {
+      await changePasswordRequest(currentPassword, newPassword);
+    },
+    [],
+  );
 
   const value = useMemo(
     () => ({
@@ -54,8 +62,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       register,
       logout,
       updateProfile,
+      changePassword,
     }),
-    [user, isLoggingIn, login, register, logout, updateProfile],
+    [
+      user,
+      isLoggingIn,
+      login,
+      register,
+      logout,
+      updateProfile,
+      changePassword,
+    ],
   );
 
   return (

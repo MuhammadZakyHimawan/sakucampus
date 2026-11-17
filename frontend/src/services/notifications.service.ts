@@ -1,6 +1,7 @@
-import { STORAGE_KEYS } from '@/lib/config';
+import { MOCK_API_ENABLED, STORAGE_KEYS } from '@/lib/config';
 import { mockNotifications } from '@/mocks/notifications';
 import type { AppNotification } from '@/types';
+import { apiRequest } from './api-client';
 import { readJson, writeJson } from './local-storage';
 
 const MOCK_DELAY = 300;
@@ -61,6 +62,10 @@ function sortNotifications(
 }
 
 export async function getNotifications(): Promise<AppNotification[]> {
+  if (!MOCK_API_ENABLED) {
+    return apiRequest<AppNotification[]>('/notifications');
+  }
+
   await wait(MOCK_DELAY);
 
   return sortNotifications(loadNotifications());
@@ -69,6 +74,12 @@ export async function getNotifications(): Promise<AppNotification[]> {
 export async function markNotificationRead(
   id: string,
 ): Promise<AppNotification> {
+  if (!MOCK_API_ENABLED) {
+    return apiRequest<AppNotification>(`/notifications/${id}/read`, {
+      method: 'PATCH',
+    });
+  }
+
   await wait(MOCK_DELAY);
 
   const notifications = loadNotifications();
@@ -93,6 +104,14 @@ export async function markNotificationRead(
 }
 
 export async function markAllNotificationsRead(): Promise<void> {
+  if (!MOCK_API_ENABLED) {
+    await apiRequest<{ updated: number }>('/notifications/read-all', {
+      method: 'PATCH',
+    });
+
+    return;
+  }
+
   await wait(MOCK_DELAY);
 
   const notifications = loadNotifications().map((notification) => ({
@@ -104,6 +123,11 @@ export async function markAllNotificationsRead(): Promise<void> {
 }
 
 export async function deleteNotification(id: string): Promise<void> {
+  if (!MOCK_API_ENABLED) {
+    await apiRequest<void>(`/notifications/${id}`, { method: 'DELETE' });
+    return;
+  }
+
   await wait(MOCK_DELAY);
 
   const notifications = loadNotifications();

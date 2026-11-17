@@ -1,3 +1,4 @@
+import { STORAGE_KEYS } from '@/lib/config';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, apiRequest, getApiBaseUrl } from './api-client';
 
@@ -26,6 +27,7 @@ function createResponse({
 }
 
 afterEach(() => {
+  window.localStorage.clear();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
@@ -68,6 +70,21 @@ describe('apiRequest', () => {
 
     expect(headers.get('Accept')).toBe('application/json');
     expect(headers.get('Content-Type')).toBe('application/json');
+  });
+
+  it('attaches the stored bearer token to requests', async () => {
+    window.localStorage.setItem(STORAGE_KEYS.token, 'token-rahasia');
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(createResponse({ payload: [] }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await apiRequest('/transactions');
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Headers;
+
+    expect(headers.get('Authorization')).toBe('Bearer token-rahasia');
   });
 
   it('returns undefined for an empty 204 response', async () => {

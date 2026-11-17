@@ -28,7 +28,7 @@ import {
   TRANSACTION_TYPE_LABELS,
 } from '@/lib/categories';
 import { cn } from '@/lib/cn';
-import { DEFAULT_PAGE_SIZE } from '@/lib/config';
+import { DEFAULT_PAGE_SIZE, MOCK_API_ENABLED } from '@/lib/config';
 import { NO_TRANSACTIONS_MESSAGE } from '@/lib/constants';
 import { TRANSACTION_VISUALS } from '@/lib/transaction-visuals';
 import type { Transaction, TransactionCategory, TransactionInput } from '@/types';
@@ -301,7 +301,9 @@ export function TransactionsPage() {
         description="Catat, cari, dan kelola seluruh transaksi pemasukan dan pengeluaran."
         actions={
           <>
-            <Badge variant="primary">Data demo</Badge>
+            <Badge variant={MOCK_API_ENABLED ? 'primary' : 'success'}>
+              {MOCK_API_ENABLED ? 'Data demo' : 'Tersinkron'}
+            </Badge>
             <Button onClick={openCreateForm}>
               <Plus className="h-4 w-4" aria-hidden="true" />
               Tambah Transaksi
