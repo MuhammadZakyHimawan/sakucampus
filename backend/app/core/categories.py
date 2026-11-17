@@ -2,6 +2,8 @@ from typing import Literal, get_args
 
 TransactionType = Literal["income", "expense", "transfer"]
 TransactionSource = Literal["manual", "telegram"]
+NotificationType = Literal["budget", "balance", "goal", "info"]
+PeriodPreset = Literal["7d", "30d", "month"]
 
 ExpenseCategory = Literal[
     "Kebutuhan Primer",
@@ -23,6 +25,7 @@ IncomeCategory = Literal[
 
 TRANSACTION_TYPES: tuple[TransactionType, ...] = get_args(TransactionType)
 TRANSACTION_SOURCES: tuple[TransactionSource, ...] = get_args(TransactionSource)
+NOTIFICATION_TYPES: tuple[NotificationType, ...] = get_args(NotificationType)
 EXPENSE_CATEGORIES: tuple[ExpenseCategory, ...] = get_args(ExpenseCategory)
 INCOME_CATEGORIES: tuple[IncomeCategory, ...] = get_args(IncomeCategory)
 

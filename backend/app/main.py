@@ -1,7 +1,8 @@
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -9,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.api.v1.router import api_router
 from app.config import get_settings
 from app.database import get_db
+from app.services.errors import ResourceConflictError, ResourceNotFoundError
 
 settings = get_settings()
 
@@ -25,6 +27,23 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(ResourceNotFoundError)
+async def resource_not_found_handler(
+    _request: Request,
+    exc: ResourceNotFoundError,
+) -> JSONResponse:
+    return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"detail": str(exc)})
+
+
+@app.exception_handler(ResourceConflictError)
+async def resource_conflict_handler(
+    _request: Request,
+    exc: ResourceConflictError,
+) -> JSONResponse:
+    return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"detail": str(exc)})
+
 
 app.include_router(api_router, prefix="/api/v1")
 

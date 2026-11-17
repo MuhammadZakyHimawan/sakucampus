@@ -60,3 +60,25 @@ def db_session() -> Generator[Session]:
         yield db
     finally:
         db.close()
+
+
+@pytest.fixture
+def auth(client: TestClient):
+    def _auth(
+        email: str = "andi@example.com",
+        name: str = "Andi Pratama",
+        password: str = "demo1234",
+    ) -> dict:
+        response = client.post(
+            "/api/v1/auth/register",
+            json={"name": name, "email": email, "password": password},
+        )
+        assert response.status_code == 201, response.json()
+        body = response.json()
+
+        return {
+            "headers": {"Authorization": f"Bearer {body['accessToken']}"},
+            "user": body["user"],
+        }
+
+    return _auth

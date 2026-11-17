@@ -18,6 +18,38 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 1440
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    telegram_bot_token: str | None = None
+    telegram_bot_username: str | None = None
+    telegram_webhook_secret: str | None = None
+    telegram_link_token_minutes: int = 15
+
+    @field_validator(
+        "telegram_bot_token",
+        "telegram_bot_username",
+        "telegram_webhook_secret",
+        mode="before",
+    )
+    @classmethod
+    def blank_to_none(cls, value: object) -> object:
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
+
+    @field_validator("telegram_bot_username")
+    @classmethod
+    def normalize_bot_username(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.lstrip("@")
+        return normalized or None
+
+    @field_validator("telegram_link_token_minutes")
+    @classmethod
+    def validate_link_token_minutes(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("TELEGRAM_LINK_TOKEN_MINUTES must be positive")
+        return value
 
     @field_validator("jwt_secret")
     @classmethod

@@ -17,6 +17,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 from app.models.base import TimestampMixin
+from app.models.telegram import TelegramAccount
 
 
 class User(TimestampMixin, Base):
@@ -34,6 +35,11 @@ class User(TimestampMixin, Base):
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     finance_settings: Mapped[FinanceSettings | None] = relationship(
+        back_populates="user",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+    telegram_account: Mapped[TelegramAccount | None] = relationship(
         back_populates="user",
         uselist=False,
         cascade="all, delete-orphan",

@@ -175,6 +175,28 @@ CREATE TABLE IF NOT EXISTS public.notifications (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS public.telegram_accounts (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL UNIQUE
+    REFERENCES public.users (id) ON DELETE CASCADE,
+  telegram_user_id bigint NOT NULL UNIQUE
+    CHECK (telegram_user_id > 0),
+  telegram_username text NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.telegram_link_tokens (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL
+    REFERENCES public.users (id) ON DELETE CASCADE,
+  token_hash text NOT NULL UNIQUE
+    CHECK (char_length(token_hash) = 64),
+  expires_at timestamptz NOT NULL,
+  used_at timestamptz NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE INDEX IF NOT EXISTS transactions_user_date_idx
   ON public.transactions (user_id, date DESC);
 
@@ -199,6 +221,9 @@ CREATE INDEX IF NOT EXISTS notifications_user_created_idx
 CREATE INDEX IF NOT EXISTS notifications_user_unread_idx
   ON public.notifications (user_id)
   WHERE is_read = false;
+
+CREATE INDEX IF NOT EXISTS telegram_link_tokens_user_id_idx
+  ON public.telegram_link_tokens (user_id);
 
 DROP TRIGGER IF EXISTS users_set_updated_at ON public.users;
 CREATE TRIGGER users_set_updated_at
@@ -227,6 +252,12 @@ CREATE TRIGGER budgets_set_updated_at
 DROP TRIGGER IF EXISTS goals_set_updated_at ON public.goals;
 CREATE TRIGGER goals_set_updated_at
   BEFORE UPDATE ON public.goals
+  FOR EACH ROW
+  EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS telegram_accounts_set_updated_at ON public.telegram_accounts;
+CREATE TRIGGER telegram_accounts_set_updated_at
+  BEFORE UPDATE ON public.telegram_accounts
   FOR EACH ROW
   EXECUTE FUNCTION public.set_updated_at();
 

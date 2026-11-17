@@ -4,9 +4,14 @@ from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, hash_password, verify_password
 from app.models import FinanceSettings, User
-from app.schemas.auth import AuthResponse, RegisterRequest
+from app.schemas.auth import (
+    AuthResponse,
+    ChangePasswordRequest,
+    ProfileUpdate,
+    RegisterRequest,
+)
 from app.schemas.user import UserOut
-from app.services.errors import EmailAlreadyRegisteredError
+from app.services.errors import EmailAlreadyRegisteredError, InvalidCredentialsError
 
 _DUMMY_HASH = hash_password("dummy-password-123")
 
@@ -79,3 +84,45 @@ def authenticate_user(db: Session, email: str, password: str) -> User | None:
         return None
 
     return user
+
+
+def update_user_profile(
+    db: Session,
+    user: User,
+    payload: ProfileUpdate,
+) -> User:
+    if payload.email is not None:
+        normalized = normalize_email(payload.email)
+        existing = get_user_by_email(db, normalized)
+
+        if existing is not None and existing.id != user.id:
+            raise EmailAlreadyRegisteredError
+
+        user.email = normalized
+
+    if payload.name is not None:
+        user.name = payload.name
+
+    if payload.avatar_url is not None:
+        user.avatar_url = payload.avatar_url or None
+
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise EmailAlreadyRegisteredError from exc
+
+    db.refresh(user)
+    return user
+
+
+def change_user_password(
+    db: Session,
+    user: User,
+    payload: ChangePasswordRequest,
+) -> None:
+    if not verify_password(payload.current_password, user.password_hash):
+        raise InvalidCredentialsError
+
+    user.password_hash = hash_password(payload.new_password)
+    db.commit()
