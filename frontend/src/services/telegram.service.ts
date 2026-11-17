@@ -1,6 +1,7 @@
-import { STORAGE_KEYS } from '@/lib/config';
-import type { TelegramStatus } from '@/types';
+import { MOCK_API_ENABLED, STORAGE_KEYS } from '@/lib/config';
+import type { TelegramLinkToken, TelegramStatus } from '@/types';
 import { toISODate } from '@/utils/date';
+import { apiRequest } from './api-client';
 import { readJson, writeJson } from './local-storage';
 
 const MOCK_DELAY = 600;
@@ -34,10 +35,20 @@ function isTelegramStatusLike(value: unknown): value is TelegramStatus {
   );
 }
 
-export function getTelegramStatus(): TelegramStatus {
+export async function getTelegramStatus(): Promise<TelegramStatus> {
+  if (!MOCK_API_ENABLED) {
+    return apiRequest<TelegramStatus>('/telegram/status');
+  }
+
   return readJson(STORAGE_KEYS.telegram, isTelegramStatusLike, () => ({
     ...DEFAULT_STATUS,
   }));
+}
+
+export async function createTelegramLinkToken(): Promise<TelegramLinkToken> {
+  return apiRequest<TelegramLinkToken>('/telegram/link-token', {
+    method: 'POST',
+  });
 }
 
 export async function connectTelegram(
@@ -59,6 +70,12 @@ export async function connectTelegram(
 }
 
 export async function disconnectTelegram(): Promise<TelegramStatus> {
+  if (!MOCK_API_ENABLED) {
+    return apiRequest<TelegramStatus>('/telegram/unlink', {
+      method: 'DELETE',
+    });
+  }
+
   await wait(MOCK_DELAY);
 
   const status: TelegramStatus = {

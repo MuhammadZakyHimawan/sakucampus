@@ -9,6 +9,14 @@ const shortDateFormatter = new Intl.DateTimeFormat('id-ID', {
   month: 'short',
 });
 
+const dateTimeFormatter = new Intl.DateTimeFormat('id-ID', {
+  day: '2-digit',
+  month: 'short',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+
 export function toDate(value: string | Date): Date {
   if (value instanceof Date) {
     return value;
@@ -29,6 +37,10 @@ export function formatDate(value: string | Date): string {
 
 export function formatShortDate(value: string | Date): string {
   return shortDateFormatter.format(toDate(value));
+}
+
+export function formatDateTime(value: string | Date): string {
+  return dateTimeFormatter.format(toDate(value));
 }
 
 export function daysInRange(start: string, end: string): number {
