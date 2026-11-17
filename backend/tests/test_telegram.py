@@ -29,13 +29,14 @@ def _update(
     telegram_user_id: int = 111_222_333,
     username: str | None = "andi_tg",
     chat_id: int | None = None,
+    update_id: int = 1,
 ) -> dict:
     sender = {"id": telegram_user_id}
     if username is not None:
         sender["username"] = username
 
     return {
-        "update_id": 1,
+        "update_id": update_id,
         "message": {
             "message_id": 10,
             "text": text,
@@ -142,7 +143,7 @@ def test_link_token_cannot_be_reused_by_another_user(client, auth):
     client.post("/api/v1/telegram/webhook", json=_update(f"/start {token}"))
     client.post(
         "/api/v1/telegram/webhook",
-        json=_update(f"/start {token}", telegram_user_id=999_888_777),
+        json=_update(f"/start {token}", telegram_user_id=999_888_777, update_id=2),
     )
 
     second_status = client.get("/api/v1/telegram/status", headers=second["headers"]).json()
@@ -177,7 +178,7 @@ def test_telegram_cannot_be_linked_to_two_users(client, auth):
     ).json()["token"]
     client.post(
         "/api/v1/telegram/webhook",
-        json=_update(f"/start {token}", telegram_user_id=555_444_333),
+        json=_update(f"/start {token}", telegram_user_id=555_444_333, update_id=2),
     )
 
     assert (
@@ -224,6 +225,16 @@ def test_webhook_requires_configured_secret(client, monkeypatch):
     assert accepted.status_code == 200
 
 
+def _capture_replies(monkeypatch) -> list[str]:
+    replies: list[str] = []
+
+    async def fake_send_message(chat_id: int, text: str) -> None:
+        replies.append(text)
+
+    monkeypatch.setattr(telegram_service, "send_message", fake_send_message)
+    return replies
+
+
 def test_webhook_requires_secret_outside_development(client, monkeypatch):
     monkeypatch.setattr(
         telegram_service,
@@ -240,3 +251,56 @@ def test_webhook_requires_secret_outside_development(client, monkeypatch):
     response = client.post("/api/v1/telegram/webhook", json=_update("/help"))
 
     assert response.status_code == 503
+
+
+def test_chat_message_creates_telegram_transaction(client, auth):
+    account = auth()
+    _link(client, account["headers"])
+
+    response = client.post(
+        "/api/v1/telegram/webhook",
+        json=_update("makan ayam 20rb", update_id=2),
+    )
+
+    assert response.status_code == 200
+    transactions = client.get("/api/v1/transactions", headers=account["headers"]).json()
+    assert len(transactions) == 1
+    assert transactions[0]["description"] == "makan ayam 20rb"
+    assert transactions[0]["amount"] == 20_000
+    assert transactions[0]["category"] == "Kebutuhan Primer"
+    assert transactions[0]["source"] == "telegram"
+
+
+def test_chat_message_of_unlinked_user_is_not_recorded(client, auth, monkeypatch):
+    replies = _capture_replies(monkeypatch)
+    account = auth()
+
+    client.post("/api/v1/telegram/webhook", json=_update("makan ayam 20rb"))
+
+    assert client.get("/api/v1/transactions", headers=account["headers"]).json() == []
+    assert len(replies) == 1
+    assert "belum terhubung" in replies[0]
+
+
+def test_unparseable_chat_message_replies_with_format_hint(client, auth, monkeypatch):
+    replies = _capture_replies(monkeypatch)
+    account = auth()
+    _link(client, account["headers"])
+
+    client.post("/api/v1/telegram/webhook", json=_update("halo", update_id=2))
+
+    assert len(replies) == 2
+    assert "makan ayam 20rb" in replies[-1]
+    assert client.get("/api/v1/transactions", headers=account["headers"]).json() == []
+
+
+def test_duplicate_webhook_update_does_not_duplicate_transaction(client, auth):
+    account = auth()
+    _link(client, account["headers"])
+    update = _update("uang saku 500rb", update_id=2)
+
+    client.post("/api/v1/telegram/webhook", json=update)
+    client.post("/api/v1/telegram/webhook", json=update)
+
+    transactions = client.get("/api/v1/transactions", headers=account["headers"]).json()
+    assert len(transactions) == 1

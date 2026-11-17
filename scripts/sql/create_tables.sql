@@ -197,6 +197,11 @@ CREATE TABLE IF NOT EXISTS public.telegram_link_tokens (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS public.telegram_processed_updates (
+  update_id bigint PRIMARY KEY,
+  processed_at timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE INDEX IF NOT EXISTS transactions_user_date_idx
   ON public.transactions (user_id, date DESC);
 

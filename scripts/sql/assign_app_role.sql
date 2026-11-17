@@ -47,6 +47,9 @@ ALTER TABLE public.budgets OWNER TO sakucampus;
 ALTER TABLE public.goals OWNER TO sakucampus;
 ALTER TABLE public.goal_contributions OWNER TO sakucampus;
 ALTER TABLE public.notifications OWNER TO sakucampus;
+ALTER TABLE public.telegram_accounts OWNER TO sakucampus;
+ALTER TABLE public.telegram_link_tokens OWNER TO sakucampus;
+ALTER TABLE public.telegram_processed_updates OWNER TO sakucampus;
 
 ALTER FUNCTION public.set_updated_at() OWNER TO sakucampus;
 

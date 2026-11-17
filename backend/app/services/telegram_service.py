@@ -13,8 +13,11 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models import TelegramAccount, TelegramLinkToken, User
+from app.models import TelegramAccount, TelegramLinkToken, TelegramProcessedUpdate, User
 from app.schemas.telegram import TelegramLinkTokenOut, TelegramStatusOut
+from app.schemas.transaction import TransactionCreate
+from app.services import transaction_service
+from app.services.telegram_parser import parse_transaction
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +114,15 @@ def unlink_telegram(db: Session, user: User) -> TelegramStatusOut:
     db.commit()
 
     return _to_status(None)
+
+
+def was_processed(db: Session, update_id: int) -> bool:
+    return db.get(TelegramProcessedUpdate, update_id) is not None
+
+
+def mark_processed(db: Session, update_id: int) -> None:
+    db.add(TelegramProcessedUpdate(update_id=update_id))
+    db.commit()
 
 
 def verify_webhook_secret(secret_header: str | None) -> None:
@@ -278,10 +290,31 @@ def process_update(db: Session, update: dict[str, Any]) -> TelegramReply | None:
             "untuk menghubungkan akun.",
         )
 
+    parsed = parse_transaction(text, today=_now().date())
+    if parsed is None:
+        return _reply(
+            chat_id,
+            "Belum bisa membaca transaksi dari pesan ini. Kirim seperti "
+            "'makan ayam 20rb' atau 'uang saku 500rb', satu transaksi per pesan.",
+        )
+
+    transaction_service.create_transaction(
+        db,
+        account.user_id,
+        TransactionCreate(
+            description=parsed.description,
+            amount=parsed.amount,
+            type=parsed.type,
+            category=parsed.category,
+            date=parsed.date,
+            source="telegram",
+        ),
+    )
+
+    amount = f"{parsed.amount:,}".replace(",", ".")
     return _reply(
         chat_id,
-        "Pencatatan transaksi lewat chat belum aktif pada tahap ini. "
-        "Untuk sementara, catat transaksi melalui website.",
+        f"Tercatat: {parsed.description} — Rp{amount} ({parsed.category}).",
     )
 
 

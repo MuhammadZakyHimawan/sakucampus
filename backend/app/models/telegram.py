@@ -54,3 +54,14 @@ class TelegramLinkToken(Base):
         server_default=func.now(),
         nullable=False,
     )
+
+
+class TelegramProcessedUpdate(Base):
+    __tablename__ = "telegram_processed_updates"
+
+    update_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    processed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )

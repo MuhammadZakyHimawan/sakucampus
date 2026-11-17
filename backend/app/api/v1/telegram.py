@@ -45,7 +45,15 @@ async def telegram_webhook(
     ] = None,
 ) -> dict[str, bool]:
     telegram_service.verify_webhook_secret(x_telegram_bot_api_secret_token)
+
+    update_id = update.get("update_id")
+    if isinstance(update_id, int) and telegram_service.was_processed(db, update_id):
+        return {"ok": True}
+
     reply = telegram_service.process_update(db, update)
+
+    if isinstance(update_id, int):
+        telegram_service.mark_processed(db, update_id)
 
     if reply is not None:
         await telegram_service.send_message(reply.chat_id, reply.text)
