@@ -1,4 +1,4 @@
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
@@ -15,9 +15,20 @@ SessionLocal = sessionmaker(
     expire_on_commit=False,
 )
 
+_session_factory: Callable[[], Session] = SessionLocal
+
 
 class Base(DeclarativeBase):
     pass
+
+
+def get_session_factory() -> Callable[[], Session]:
+    return _session_factory
+
+
+def set_session_factory(factory: Callable[[], Session]) -> None:
+    global _session_factory
+    _session_factory = factory
 
 
 def get_db() -> Generator[Session]:

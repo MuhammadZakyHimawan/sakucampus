@@ -7,6 +7,7 @@ from sqlalchemy import (
     BigInteger,
     CheckConstraint,
     Date,
+    Double,
     ForeignKey,
     Index,
     Text,
@@ -49,6 +50,10 @@ class Transaction(TimestampMixin, Base):
             ")",
             name="transactions_category_matches_type",
         ),
+        CheckConstraint(
+            "nlp_confidence IS NULL OR (nlp_confidence >= 0.0 AND nlp_confidence <= 1.0)",
+            name="transactions_nlp_confidence_check",
+        ),
         Index("transactions_user_date_idx", "user_id", desc("date")),
         Index("transactions_user_type_date_idx", "user_id", "type", desc("date")),
         Index("transactions_user_category_date_idx", "user_id", "category", desc("date")),
@@ -72,3 +77,5 @@ class Transaction(TimestampMixin, Base):
         server_default=text("'manual'"),
     )
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    raw_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    nlp_confidence: Mapped[float | None] = mapped_column(Double, nullable=True)

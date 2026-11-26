@@ -1,31 +1,38 @@
 from __future__ import annotations
 
-import math
 from collections import defaultdict
 from datetime import date, timedelta
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.constants import BUDGET_EXCEEDED_THRESHOLD, BUDGET_WARNING_THRESHOLD
-from app.models import Budget, FinanceSettings, Transaction, User
+from app.models import Budget, Transaction, User
+from app.modules.rule_engine.evaluator import RuleFinding
+from app.modules.rule_engine.metrics import days_in_range, format_rupiah
+from app.modules.rule_engine.service import evaluate_user_finances
 from app.schemas.analytics import (
     BudgetOverviewItemOut,
+    BudgetStatus,
     CashflowPointOut,
     CategoryTotalOut,
-    DashboardDataOut,
+    DashboardMetricsOut,
     DashboardSummaryOut,
     FinancialInsightOut,
-    PeriodPreset,
+    InsightTone,
     PeriodRangeOut,
+    ReportAnalyticsOut,
     ReportComparisonOut,
-    ReportDataOut,
     ReportSummaryOut,
 )
 from app.schemas.budget import BudgetOut
+from app.schemas.rule_engine import RuleAlertOut
+from app.schemas.settings import PeriodPreset
 from app.schemas.transaction import TransactionOut
+from app.services.budget_service import list_budgets
+from app.services.goal_service import list_goals
+from app.services.settings_service import get_or_create_finance_settings
+from app.services.transaction_service import list_transactions
 
-MONTH_LABELS_ID = (
+_INDONESIAN_MONTHS = (
     "Jan",
     "Feb",
     "Mar",
@@ -40,267 +47,246 @@ MONTH_LABELS_ID = (
     "Des",
 )
 
-
-def _round_half_up(value: float) -> int:
-    return math.floor(value + 0.5)
-
-
-def _format_currency(value: int) -> str:
-    return f"Rp{value:,}".replace(",", ".")
+_PERIOD_LABELS: dict[PeriodPreset, str] = {
+    "7d": "7 hari terakhir",
+    "30d": "30 hari terakhir",
+    "month": "Bulan ini",
+}
 
 
-def _short_date(value: date) -> str:
-    return f"{value.day:02d} {MONTH_LABELS_ID[value.month - 1]}"
+def format_short_date_id(value: date) -> str:
+    return f"{value.day:02d} {_INDONESIAN_MONTHS[value.month - 1]}"
 
 
-def _days_in_range(start: date, end: date) -> int:
-    return max(1, (end - start).days + 1)
-
-
-def _period_range(preset: PeriodPreset, reference: date) -> PeriodRangeOut:
+def get_period_range(
+    preset: PeriodPreset,
+    reference: date | None = None,
+) -> PeriodRangeOut:
+    end = reference or date.today()
     if preset == "month":
-        return PeriodRangeOut(
-            start=reference.replace(day=1),
-            end=reference,
-            label="Bulan ini",
-        )
+        start = end.replace(day=1)
+        return PeriodRangeOut(start=start, end=end, label=_PERIOD_LABELS[preset])
 
     days = 7 if preset == "7d" else 30
-    return PeriodRangeOut(
-        start=reference - timedelta(days=days - 1),
-        end=reference,
-        label=f"{days} hari terakhir",
-    )
+    start = end - timedelta(days=days - 1)
+    return PeriodRangeOut(start=start, end=end, label=_PERIOD_LABELS[preset])
 
 
-def _previous_period_range(preset: PeriodPreset, reference: date) -> PeriodRangeOut:
+def get_previous_period_range(
+    preset: PeriodPreset | None,
+    current_range: PeriodRangeOut,
+) -> PeriodRangeOut:
     if preset == "month":
-        previous_month_end = reference.replace(day=1) - timedelta(days=1)
-        return PeriodRangeOut(
-            start=previous_month_end.replace(day=1),
-            end=previous_month_end,
-            label="Bulan sebelumnya",
-        )
+        first_of_current = current_range.start.replace(day=1)
+        prev_end = first_of_current - timedelta(days=1)
+        prev_start = prev_end.replace(day=1)
+        return PeriodRangeOut(start=prev_start, end=prev_end, label="Bulan sebelumnya")
 
-    days = 7 if preset == "7d" else 30
-    current_start = _period_range(preset, reference).start
-    end = current_start - timedelta(days=1)
+    span_days = days_in_range(current_range.start, current_range.end)
+    prev_end = current_range.start - timedelta(days=1)
+    prev_start = prev_end - timedelta(days=span_days - 1)
     return PeriodRangeOut(
-        start=end - timedelta(days=days - 1),
-        end=end,
-        label=f"{days} hari sebelumnya",
+        start=prev_start,
+        end=prev_end,
+        label=f"{span_days} hari sebelumnya",
     )
 
 
-def _within(value: date, period: PeriodRangeOut) -> bool:
-    return period.start <= value <= period.end
+def resolve_range(
+    preset: PeriodPreset | None,
+    start_date: date | None,
+    end_date: date | None,
+    *,
+    default_preset: PeriodPreset = "30d",
+    reference: date | None = None,
+) -> tuple[PeriodPreset | None, PeriodRangeOut]:
+    if start_date is not None and end_date is not None:
+        return None, PeriodRangeOut(
+            start=start_date,
+            end=end_date,
+            label=f"{format_short_date_id(start_date)} – {format_short_date_id(end_date)}",
+        )
+    effective_preset = preset or default_preset
+    return effective_preset, get_period_range(effective_preset, reference)
 
 
-def _total_by_type(transactions: list[TransactionOut], transaction_type: str) -> int:
-    return sum(item.amount for item in transactions if item.type == transaction_type)
+def sum_by_type(transactions: list[Transaction], tx_type: str) -> int:
+    return sum(tx.amount for tx in transactions if tx.type == tx_type)
 
 
-def _compute_balance(initial_balance: int, transactions: list[TransactionOut]) -> int:
-    return (
-        initial_balance
-        + _total_by_type(transactions, "income")
-        - _total_by_type(transactions, "expense")
-    )
+def compute_burn_rate(transactions: list[Transaction], start: date, end: date) -> int:
+    total_expense = sum_by_type(transactions, "expense")
+    return round(total_expense / days_in_range(start, end))
 
 
-def _compute_burn_rate(
-    transactions: list[TransactionOut],
-    period: PeriodRangeOut,
-) -> int:
-    return _round_half_up(
-        _total_by_type(transactions, "expense") / _days_in_range(period.start, period.end)
-    )
-
-
-def _group_expenses(transactions: list[TransactionOut]) -> list[CategoryTotalOut]:
+def group_expenses_by_category(transactions: list[Transaction]) -> list[CategoryTotalOut]:
     totals: dict[str, int] = defaultdict(int)
-    for item in transactions:
-        if item.type == "expense":
-            totals[item.category] += item.amount
-
+    for tx in transactions:
+        if tx.type == "expense":
+            totals[tx.category] += tx.amount
     return [
         CategoryTotalOut(category=category, total=total)
-        for category, total in sorted(totals.items(), key=lambda row: row[1], reverse=True)
+        for category, total in sorted(totals.items(), key=lambda pair: pair[1], reverse=True)
     ]
 
 
-def _build_cashflow(
-    transactions: list[TransactionOut],
-    period: PeriodRangeOut,
-    preset: PeriodPreset,
+def build_cashflow_series(
+    transactions: list[Transaction],
+    period_range: PeriodRangeOut,
+    preset: PeriodPreset | None,
 ) -> list[CashflowPointOut]:
-    should_group_weekly = preset != "7d" and _days_in_range(period.start, period.end) > 10
+    total_days = days_in_range(period_range.start, period_range.end)
+    should_group_weekly = preset != "7d" and total_days > 10
     points: list[CashflowPointOut] = []
-    cursor = period.start
 
     if should_group_weekly:
+        cursor = period_range.start
         index = 1
-        while cursor <= period.end:
-            bucket_end = min(cursor + timedelta(days=6), period.end)
-            bucket = PeriodRangeOut(start=cursor, end=bucket_end, label="")
-            bucket_transactions = [item for item in transactions if _within(item.date, bucket)]
+        while cursor <= period_range.end:
+            bucket_end = min(cursor + timedelta(days=6), period_range.end)
+            bucket_txs = [tx for tx in transactions if cursor <= tx.date <= bucket_end]
             points.append(
                 CashflowPointOut(
                     key=f"week-{index}",
                     label=f"Mgg {index}",
-                    range_label=f"{_short_date(cursor)} – {_short_date(bucket_end)}",
-                    income=_total_by_type(bucket_transactions, "income"),
-                    expense=_total_by_type(bucket_transactions, "expense"),
+                    range_label=(
+                        f"{format_short_date_id(cursor)} – {format_short_date_id(bucket_end)}"
+                    ),
+                    income=sum_by_type(bucket_txs, "income"),
+                    expense=sum_by_type(bucket_txs, "expense"),
                 )
             )
-            cursor += timedelta(days=7)
+            cursor = cursor + timedelta(days=7)
             index += 1
         return points
 
-    while cursor <= period.end:
-        day = PeriodRangeOut(start=cursor, end=cursor, label="")
-        day_transactions = [item for item in transactions if _within(item.date, day)]
+    cursor = period_range.start
+    while cursor <= period_range.end:
+        day_txs = [tx for tx in transactions if tx.date == cursor]
+        short_label = format_short_date_id(cursor)
         points.append(
             CashflowPointOut(
                 key=cursor.isoformat(),
-                label=_short_date(cursor),
-                range_label=_short_date(cursor),
-                income=_total_by_type(day_transactions, "income"),
-                expense=_total_by_type(day_transactions, "expense"),
+                label=short_label,
+                range_label=short_label,
+                income=sum_by_type(day_txs, "income"),
+                expense=sum_by_type(day_txs, "expense"),
             )
         )
-        cursor += timedelta(days=1)
-
+        cursor = cursor + timedelta(days=1)
     return points
 
 
-def _budget_status(percentage: float) -> str:
-    if percentage >= BUDGET_EXCEEDED_THRESHOLD:
-        return "exceeded"
-    if percentage >= BUDGET_WARNING_THRESHOLD:
+def _map_rule_alerts(findings: list[RuleFinding]) -> list[RuleAlertOut]:
+    return [
+        RuleAlertOut(
+            rule_code=f.rule_code,
+            notification_type=f.notification_type,
+            severity=f.severity,
+            title=f.title,
+            message=f.message,
+            dedup_key=f.dedup_key,
+            link=f.link,
+        )
+        for f in findings
+    ]
+
+
+def _severity_to_tone(severity: str) -> InsightTone:
+    if severity == "critical":
+        return "danger"
+    if severity == "warning":
         return "warning"
-    return "safe"
-
-
-def _build_budget_overview(
-    budgets: list[BudgetOut],
-    transactions: list[TransactionOut],
-) -> list[BudgetOverviewItemOut]:
-    items: list[BudgetOverviewItemOut] = []
-    for budget in budgets:
-        used = sum(
-            item.amount
-            for item in transactions
-            if item.type == "expense"
-            and item.category == budget.category
-            and budget.period_start <= item.date <= budget.period_end
-        )
-        percentage = _round_half_up(used / budget.limit * 100)
-        items.append(
-            BudgetOverviewItemOut(
-                budget=budget,
-                used=used,
-                remaining=budget.limit - used,
-                percentage=percentage,
-                status=_budget_status(used / budget.limit * 100),
-            )
-        )
-
-    return sorted(items, key=lambda item: item.percentage, reverse=True)
+    return "info"
 
 
 def _build_insights(
-    summary: DashboardSummaryOut,
+    *,
+    rule_findings: list[RuleFinding],
+    net_cash_flow: int,
     categories: list[CategoryTotalOut],
-    previous_transactions: list[TransactionOut],
-    budgets: list[BudgetOverviewItemOut],
+    previous_transactions: list[Transaction],
     has_transactions: bool,
 ) -> list[FinancialInsightOut]:
-    if not has_transactions:
-        return []
-
     insights: list[FinancialInsightOut] = []
-    highlighted_budget = next(
-        (item for item in budgets if item.status == "exceeded"),
-        next((item for item in budgets if item.status == "warning"), None),
-    )
 
-    if highlighted_budget is not None:
-        is_exceeded = highlighted_budget.status == "exceeded"
-        condition = "terlampaui" if is_exceeded else "hampir habis"
-        insights.append(
-            FinancialInsightOut(
-                id=f"budget-{highlighted_budget.budget.id}",
-                tone="danger" if is_exceeded else "warning",
-                title=f"Anggaran {highlighted_budget.budget.category} {condition}",
-                description=(
-                    f"Sudah terpakai {highlighted_budget.percentage}% dari batas "
-                    f"{_format_currency(highlighted_budget.budget.limit)} bulan ini."
-                ),
+    # Surface critical/warning Rule Engine alerts first
+    for finding in rule_findings:
+        if finding.severity in {"critical", "warning"}:
+            insights.append(
+                FinancialInsightOut(
+                    id=f"rule-{finding.rule_code}",
+                    tone=_severity_to_tone(finding.severity),
+                    title=finding.title,
+                    description=finding.message,
+                )
             )
-        )
+        if len(insights) >= 2:
+            break
 
-    previous_totals = {item.category: item.total for item in _group_expenses(previous_transactions)}
-    increasing_categories = [
-        {
-            "category": item.category,
-            "previous": previous_totals.get(item.category, 0),
-            "change": (
-                (item.total - previous_totals[item.category]) / previous_totals[item.category] * 100
-            ),
-        }
-        for item in categories
-        if previous_totals.get(item.category, 0) > 0
-    ]
-    increasing_categories = [item for item in increasing_categories if item["change"] >= 15]
-    increasing_categories.sort(key=lambda item: item["change"], reverse=True)
+    if not has_transactions:
+        return insights[:3]
 
-    if increasing_categories:
-        top = increasing_categories[0]
+    previous_totals = {
+        item.category: item.total for item in group_expenses_by_category(previous_transactions)
+    }
+    increasing: tuple[str, float] | None = None
+    for category_item in categories:
+        prev_total = previous_totals.get(category_item.category, 0)
+        if prev_total > 0:
+            change = ((category_item.total - prev_total) / prev_total) * 100
+            if change >= 15 and (increasing is None or change > increasing[1]):
+                increasing = (category_item.category, change)
+
+    if len(insights) < 3 and increasing is not None:
+        cat_name, pct_change = increasing
         insights.append(
             FinancialInsightOut(
-                id=f"trend-{top['category']}",
+                id=f"trend-{cat_name}",
                 tone="warning",
-                title=f"{top['category']} meningkat",
+                title=f"{cat_name} meningkat",
                 description=(
-                    f"Pengeluaran {top['category'].lower()} naik "
-                    f"{_round_half_up(top['change'])}% dibanding periode sebelumnya."
+                    f"Pengeluaran {cat_name.lower()} naik {round(pct_change)}% "
+                    "dibanding periode sebelumnya."
                 ),
             )
         )
 
-    if summary.net > 0:
-        insights.append(
-            FinancialInsightOut(
-                id="net-positive",
-                tone="positive",
-                title="Kamu berhasil menyisihkan",
-                description=(f"Kamu menyisihkan {_format_currency(summary.net)} pada periode ini."),
+    if len(insights) < 3:
+        if net_cash_flow > 0:
+            insights.append(
+                FinancialInsightOut(
+                    id="net-positive",
+                    tone="positive",
+                    title="Kamu berhasil menyisihkan",
+                    description=(
+                        f"Kamu menyisihkan {format_rupiah(net_cash_flow)} pada periode ini."
+                    ),
+                )
             )
-        )
-    elif summary.net < 0:
-        insights.append(
-            FinancialInsightOut(
-                id="net-negative",
-                tone="danger",
-                title="Pengeluaran lebih besar",
-                description=(
-                    f"Pengeluaran melebihi pemasukan sebesar "
-                    f"{_format_currency(abs(summary.net))} pada periode ini."
-                ),
+        elif net_cash_flow < 0:
+            insights.append(
+                FinancialInsightOut(
+                    id="net-negative",
+                    tone="danger",
+                    title="Pengeluaran lebih besar",
+                    description=(
+                        f"Pengeluaran melebihi pemasukan sebesar "
+                        f"{format_rupiah(abs(net_cash_flow))} pada periode ini."
+                    ),
+                )
             )
-        )
 
     if len(insights) < 3 and categories:
-        top_category = categories[0]
+        top = categories[0]
         insights.append(
             FinancialInsightOut(
                 id="top-category",
                 tone="info",
-                title=f"Kategori terbesar: {top_category.category}",
+                title=f"Kategori terbesar: {top.category}",
                 description=(
-                    f"Pengeluaran terbesar periode ini ada di {top_category.category} "
-                    f"sebesar {_format_currency(top_category.total)}."
+                    f"Pengeluaran terbesar periode ini ada di {top.category} "
+                    f"sebesar {format_rupiah(top.total)}."
                 ),
             )
         )
@@ -308,129 +294,195 @@ def _build_insights(
     return insights[:3]
 
 
-def _load_domain(
-    db: Session,
-    user: User,
-) -> tuple[list[TransactionOut], list[BudgetOut], int, int]:
-    transactions = [
-        TransactionOut.model_validate(item)
-        for item in db.scalars(
-            select(Transaction)
-            .where(Transaction.user_id == user.id)
-            .order_by(Transaction.date.desc(), Transaction.created_at.desc())
-        )
-    ]
-    budgets = [
-        BudgetOut(
-            id=item.id,
-            category=item.category,
-            limit=item.limit_amount,
-            period_start=item.period_start,
-            period_end=item.period_end,
-        )
-        for item in db.scalars(select(Budget).where(Budget.user_id == user.id))
-    ]
-    settings = db.scalar(select(FinanceSettings).where(FinanceSettings.user_id == user.id))
-
-    return (
-        transactions,
-        budgets,
-        settings.initial_balance if settings is not None else 0,
-        settings.min_balance if settings is not None else 0,
-    )
-
-
-def build_dashboard_data(
-    db: Session,
-    user: User,
-    preset: PeriodPreset,
-    reference: date | None = None,
-) -> DashboardDataOut:
-    today = reference or date.today()
-    transactions, budgets, initial_balance, min_balance = _load_domain(db, user)
-    period = _period_range(preset, today)
-    previous_period = _previous_period_range(preset, today)
-    period_transactions = [item for item in transactions if _within(item.date, period)]
-    previous_transactions = [item for item in transactions if _within(item.date, previous_period)]
-    income = _total_by_type(period_transactions, "income")
-    expense = _total_by_type(period_transactions, "expense")
-    categories = _group_expenses(period_transactions)
-    budget_overview = _build_budget_overview(budgets, transactions)
-    summary = DashboardSummaryOut(
-        balance=_compute_balance(initial_balance, transactions),
-        min_balance=min_balance,
-        income=income,
-        expense=expense,
-        net=income - expense,
-        burn_rate=_compute_burn_rate(period_transactions, period),
-    )
-
-    return DashboardDataOut(
-        period=preset,
-        range=period,
-        summary=summary,
-        cashflow=_build_cashflow(period_transactions, period, preset),
-        categories=categories,
-        budgets=budget_overview,
-        insights=_build_insights(
-            summary,
-            categories,
-            previous_transactions,
-            budget_overview,
-            bool(period_transactions),
-        ),
-        recent_transactions=period_transactions[:6],
-        transaction_count=len(period_transactions),
-    )
+def _compute_change_percentage(current: int, previous: int) -> float | None:
+    if previous == 0:
+        return 0.0 if current == 0 else None
+    return round(((current - previous) / previous) * 100, 2)
 
 
 def _build_report_summary(
-    transactions: list[TransactionOut],
-    period: PeriodRangeOut,
+    transactions: list[Transaction],
+    period_range: PeriodRangeOut,
 ) -> ReportSummaryOut:
-    income = _total_by_type(transactions, "income")
-    expense = _total_by_type(transactions, "expense")
+    income = sum_by_type(transactions, "income")
+    expense = sum_by_type(transactions, "expense")
     return ReportSummaryOut(
         income=income,
         expense=expense,
         net=income - expense,
-        daily_average_expense=_compute_burn_rate(transactions, period),
+        daily_average_expense=compute_burn_rate(
+            transactions,
+            period_range.start,
+            period_range.end,
+        ),
         transaction_count=len(transactions),
     )
 
 
-def _compute_change(current: int, previous: int) -> float | None:
-    if previous == 0:
-        return 0 if current == 0 else None
-    return (current - previous) / previous * 100
+def _build_budget_overview_from_engine(
+    budgets_by_id: dict[object, Budget],
+    engine_usages: list,
+) -> list[BudgetOverviewItemOut]:
+    items: list[BudgetOverviewItemOut] = []
+    for usage in engine_usages:
+        budget_model = budgets_by_id.get(usage.budget_id)
+        if budget_model is None:
+            continue
+        status_val: BudgetStatus = usage.status
+        items.append(
+            BudgetOverviewItemOut(
+                budget=BudgetOut.model_validate(budget_model),
+                used=usage.spent,
+                remaining=usage.remaining,
+                percentage=usage.percentage_int,
+                status=status_val,
+            )
+        )
+    return items
 
 
-def build_report_data(
+def build_dashboard_summary(
     db: Session,
     user: User,
-    preset: PeriodPreset,
+    *,
+    preset: PeriodPreset | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
     reference: date | None = None,
-) -> ReportDataOut:
-    today = reference or date.today()
-    transactions, _, _, _ = _load_domain(db, user)
-    period = _period_range(preset, today)
-    previous_period = _previous_period_range(preset, today)
-    period_transactions = [item for item in transactions if _within(item.date, period)]
-    previous_transactions = [item for item in transactions if _within(item.date, previous_period)]
-    summary = _build_report_summary(period_transactions, period)
-    previous = _build_report_summary(previous_transactions, previous_period)
+) -> DashboardSummaryOut:
+    settings = get_or_create_finance_settings(db, user.id)
+    effective_preset, period_range = resolve_range(
+        preset,
+        start_date,
+        end_date,
+        default_preset=settings.period,  # type: ignore[arg-type]
+        reference=reference,
+    )
+    previous_range = get_previous_period_range(effective_preset, period_range)
 
-    return ReportDataOut(
-        range=period,
-        previous_range=previous_period,
+    all_transactions = list_transactions(db, user.id)
+    period_transactions = [
+        tx for tx in all_transactions if period_range.start <= tx.date <= period_range.end
+    ]
+    previous_transactions = [
+        tx for tx in all_transactions if previous_range.start <= tx.date <= previous_range.end
+    ]
+    budgets = list_budgets(db, user.id)
+    budgets_by_id = {b.id: b for b in budgets}
+    goals = list_goals(db, user.id)
+
+    # Single source of truth via Rule Engine
+    eval_result = evaluate_user_finances(
+        db,
+        user.id,
+        persist_notifications=False,
+        reference_date=period_range.end,
+        period_start=period_range.start,
+        period_end=period_range.end,
+        evaluate_all_budgets=True,
+    )
+    metrics = eval_result.metrics
+
+    budget_overview = _build_budget_overview_from_engine(budgets_by_id, metrics.budget_usages)
+    categories = group_expenses_by_category(period_transactions)
+    insights = _build_insights(
+        rule_findings=eval_result.alerts,
+        net_cash_flow=metrics.net_cash_flow,
+        categories=categories,
+        previous_transactions=previous_transactions,
+        has_transactions=len(period_transactions) > 0,
+    )
+    recent_transactions = [TransactionOut.model_validate(tx) for tx in period_transactions[:6]]
+
+    return DashboardSummaryOut(
+        period=effective_preset or settings.period,  # type: ignore[arg-type]
+        range=period_range,
+        summary=DashboardMetricsOut(
+            balance=metrics.balance,
+            min_balance=metrics.min_balance,
+            total_income=metrics.period_income,
+            total_expense=metrics.period_expense,
+            net_cash_flow=metrics.net_cash_flow,
+            daily_burn_rate=metrics.daily_burn_rate,
+            runway_days=metrics.runway_days,
+            safe_daily_spend=metrics.safe_daily_spend,
+            financial_status=eval_result.financial_status,
+        ),
+        cashflow=build_cashflow_series(period_transactions, period_range, effective_preset),
+        categories=categories,
+        budgets=budget_overview,
+        goals=goals,
+        insights=insights,
+        rule_alerts=_map_rule_alerts(eval_result.alerts),
+        recent_transactions=recent_transactions,
+        transaction_count=len(period_transactions),
+    )
+
+
+def build_report_analytics(
+    db: Session,
+    user: User,
+    *,
+    preset: PeriodPreset | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    reference: date | None = None,
+) -> ReportAnalyticsOut:
+    effective_preset, period_range = resolve_range(
+        preset,
+        start_date,
+        end_date,
+        default_preset="30d",
+        reference=reference,
+    )
+    previous_range = get_previous_period_range(effective_preset, period_range)
+
+    all_transactions = list_transactions(db, user.id)
+    period_transactions = [
+        tx for tx in all_transactions if period_range.start <= tx.date <= period_range.end
+    ]
+    previous_transactions = [
+        tx for tx in all_transactions if previous_range.start <= tx.date <= previous_range.end
+    ]
+    budgets = list_budgets(db, user.id)
+    budgets_by_id = {b.id: b for b in budgets}
+    goals = list_goals(db, user.id)
+
+    eval_result = evaluate_user_finances(
+        db,
+        user.id,
+        persist_notifications=False,
+        reference_date=period_range.end,
+        period_start=period_range.start,
+        period_end=period_range.end,
+        evaluate_all_budgets=True,
+    )
+    metrics = eval_result.metrics
+
+    summary = _build_report_summary(period_transactions, period_range)
+    previous = _build_report_summary(previous_transactions, previous_range)
+    budget_overview = _build_budget_overview_from_engine(budgets_by_id, metrics.budget_usages)
+
+    return ReportAnalyticsOut(
+        range=period_range,
+        previous_range=previous_range,
+        balance=metrics.balance,
+        min_balance=metrics.min_balance,
+        daily_burn_rate=metrics.daily_burn_rate,
+        runway_days=metrics.runway_days,
+        safe_daily_spend=metrics.safe_daily_spend,
+        financial_status=eval_result.financial_status,
         summary=summary,
         comparison=ReportComparisonOut(
             previous=previous,
-            income_change=_compute_change(summary.income, previous.income),
-            expense_change=_compute_change(summary.expense, previous.expense),
-            net_change=_compute_change(summary.net, previous.net),
+            income_change=_compute_change_percentage(summary.income, previous.income),
+            expense_change=_compute_change_percentage(summary.expense, previous.expense),
+            net_change=_compute_change_percentage(summary.net, previous.net),
         ),
-        cashflow=_build_cashflow(period_transactions, period, preset),
-        categories=_group_expenses(period_transactions),
-        transactions=sorted(period_transactions, key=lambda item: item.date, reverse=True),
+        cashflow=build_cashflow_series(period_transactions, period_range, effective_preset),
+        categories=group_expenses_by_category(period_transactions),
+        budgets=budget_overview,
+        goals=goals,
+        rule_alerts=_map_rule_alerts(eval_result.alerts),
+        transactions=[TransactionOut.model_validate(tx) for tx in period_transactions],
     )

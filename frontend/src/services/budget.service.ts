@@ -1,5 +1,5 @@
 import { EXPENSE_CATEGORIES } from '@/lib/categories';
-import { MOCK_API_ENABLED } from '@/lib/config';
+import { isMockApiEnabled } from '@/lib/config';
 import type { Budget, BudgetInput, ExpenseCategory } from '@/types';
 import { apiRequest } from './api-client';
 import { createId, loadDataset, saveDataset } from './data-store';
@@ -18,10 +18,15 @@ function validateBudgetInput(input: BudgetInput): void {
   }
 
   if (!Number.isInteger(input.limit) || input.limit <= 0) {
-    throw new Error('Batas anggaran harus berupa angka bulat lebih besar dari nol.');
+    throw new Error(
+      'Batas anggaran harus berupa angka bulat lebih besar dari nol.',
+    );
   }
 
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.periodStart) || !/^\d{4}-\d{2}-\d{2}$/.test(input.periodEnd)) {
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(input.periodStart) ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(input.periodEnd)
+  ) {
     throw new Error('Periode anggaran tidak valid.');
   }
 
@@ -31,7 +36,7 @@ function validateBudgetInput(input: BudgetInput): void {
 }
 
 export async function getBudgets(): Promise<Budget[]> {
-  if (!MOCK_API_ENABLED) {
+  if (!isMockApiEnabled()) {
     return apiRequest<Budget[]>('/budgets');
   }
 
@@ -41,7 +46,9 @@ export async function getBudgets(): Promise<Budget[]> {
 }
 
 export async function createBudget(input: BudgetInput): Promise<Budget> {
-  if (!MOCK_API_ENABLED) {
+  validateBudgetInput(input);
+
+  if (!isMockApiEnabled()) {
     return apiRequest<Budget>('/budgets', {
       method: 'POST',
       body: input,
@@ -49,7 +56,6 @@ export async function createBudget(input: BudgetInput): Promise<Budget> {
   }
 
   await wait(MOCK_DELAY);
-  validateBudgetInput(input);
 
   const dataset = loadDataset();
 
@@ -78,7 +84,9 @@ export async function updateBudget(
   id: string,
   input: BudgetInput,
 ): Promise<Budget> {
-  if (!MOCK_API_ENABLED) {
+  validateBudgetInput(input);
+
+  if (!isMockApiEnabled()) {
     return apiRequest<Budget>(`/budgets/${id}`, {
       method: 'PATCH',
       body: input,
@@ -86,7 +94,6 @@ export async function updateBudget(
   }
 
   await wait(MOCK_DELAY);
-  validateBudgetInput(input);
 
   const dataset = loadDataset();
   const index = dataset.budgets.findIndex((budget) => budget.id === id);
@@ -119,7 +126,7 @@ export async function updateBudget(
 }
 
 export async function deleteBudget(id: string): Promise<void> {
-  if (!MOCK_API_ENABLED) {
+  if (!isMockApiEnabled()) {
     await apiRequest<void>(`/budgets/${id}`, { method: 'DELETE' });
     return;
   }

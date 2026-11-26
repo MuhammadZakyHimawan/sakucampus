@@ -4,14 +4,9 @@ from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, hash_password, verify_password
 from app.models import FinanceSettings, User
-from app.schemas.auth import (
-    AuthResponse,
-    ChangePasswordRequest,
-    ProfileUpdate,
-    RegisterRequest,
-)
+from app.schemas.auth import AuthResponse, RegisterRequest
 from app.schemas.user import UserOut
-from app.services.errors import EmailAlreadyRegisteredError, InvalidCredentialsError
+from app.services.errors import EmailAlreadyRegisteredError
 
 _DUMMY_HASH = hash_password("dummy-password-123")
 
@@ -42,13 +37,13 @@ def build_user_out(db: Session, user: User) -> UserOut:
     )
 
 
-def build_auth_response(db: Session, user: User) -> tuple[AuthResponse, str]:
-    token, expires_in = create_access_token(user.id, user.token_version)
-    response = AuthResponse(
+def build_auth_response(db: Session, user: User) -> AuthResponse:
+    token, expires_in = create_access_token(user.id)
+    return AuthResponse(
+        access_token=token,
         expires_in=expires_in,
         user=build_user_out(db, user),
     )
-    return response, token
 
 
 def register_user(db: Session, payload: RegisterRequest) -> User:
@@ -84,51 +79,3 @@ def authenticate_user(db: Session, email: str, password: str) -> User | None:
         return None
 
     return user
-
-
-def update_user_profile(
-    db: Session,
-    user: User,
-    payload: ProfileUpdate,
-) -> User:
-    if payload.email is not None:
-        normalized = normalize_email(payload.email)
-        existing = get_user_by_email(db, normalized)
-
-        if existing is not None and existing.id != user.id:
-            raise EmailAlreadyRegisteredError
-
-        user.email = normalized
-
-    if payload.name is not None:
-        user.name = payload.name
-
-    if payload.avatar_url is not None:
-        user.avatar_url = payload.avatar_url or None
-
-    try:
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        raise EmailAlreadyRegisteredError from exc
-
-    db.refresh(user)
-    return user
-
-
-def change_user_password(
-    db: Session,
-    user: User,
-    payload: ChangePasswordRequest,
-) -> None:
-    if not verify_password(payload.current_password, user.password_hash):
-        raise InvalidCredentialsError
-
-    user.password_hash = hash_password(payload.new_password)
-    revoke_user_tokens(db, user)
-
-
-def revoke_user_tokens(db: Session, user: User) -> None:
-    user.token_version += 1
-    db.commit()
-    db.refresh(user)

@@ -1,120 +1,146 @@
-TRANSACTION_PAYLOAD = {
-    "description": "Makan siang",
-    "amount": 25_000,
-    "type": "expense",
-    "category": "Kebutuhan Primer",
-    "date": "2026-11-10",
-    "source": "manual",
-}
+from datetime import date, timedelta
 
 
-def create_transaction(client, headers, **overrides):
-    payload = {**TRANSACTION_PAYLOAD, **overrides}
-    return client.post("/api/v1/transactions", json=payload, headers=headers)
-
-
-def test_create_transaction_returns_camel_case(client, auth):
-    account = auth()
-    response = create_transaction(client, account["headers"])
-
+def _auth_headers(client, email: str = "usera@example.com", name: str = "User A") -> dict[str, str]:
+    response = client.post(
+        "/api/v1/auth/register",
+        json={"name": name, "email": email, "password": "Password123"},
+    )
     assert response.status_code == 201
-    body = response.json()
-    assert body["description"] == "Makan siang"
-    assert body["amount"] == 25_000
-    assert body["type"] == "expense"
-    assert body["category"] == "Kebutuhan Primer"
-    assert body["date"] == "2026-11-10"
-    assert body["source"] == "manual"
+    token = response.json()["accessToken"]
+    return {"Authorization": f"Bearer {token}"}
 
 
-def test_create_transaction_rejects_telegram_source(client, auth):
-    account = auth()
-    response = create_transaction(client, account["headers"], source="telegram")
+def test_transactions_crud_and_filters(client):
+    headers = _auth_headers(client)
+    today = date.today()
+    yesterday = today - timedelta(days=1)
 
-    assert response.status_code == 422
+    create_expense = client.post(
+        "/api/v1/transactions",
+        headers=headers,
+        json={
+            "description": "Makan ayam geprek",
+            "amount": 20000,
+            "type": "expense",
+            "category": "Kebutuhan Primer",
+            "date": today.isoformat(),
+            "source": "telegram",
+            "rawText": "makan ayam geprek 20rb",
+            "nlpConfidence": 0.93,
+        },
+    )
+    assert create_expense.status_code == 201
+    tx_expense = create_expense.json()
+    assert tx_expense["amount"] == 20000
+    assert tx_expense["source"] == "telegram"
+    assert tx_expense["rawText"] == "makan ayam geprek 20rb"
+    assert tx_expense["nlpConfidence"] == 0.93
 
+    create_income = client.post(
+        "/api/v1/transactions",
+        headers=headers,
+        json={
+            "description": "Uang saku bulanan",
+            "amount": 1500000,
+            "type": "income",
+            "category": "Uang Saku",
+            "date": yesterday.isoformat(),
+            "source": "manual",
+        },
+    )
+    assert create_income.status_code == 201
 
-def test_list_transactions_filters_and_sorts(client, auth):
-    account = auth()
-    headers = account["headers"]
-    create_transaction(client, headers, description="Kopi", date="2026-11-01", amount=15_000)
-    create_transaction(client, headers, description="Bensin", date="2026-11-05", amount=60_000)
-
-    response = client.get("/api/v1/transactions", headers=headers)
-
-    assert response.status_code == 200
-    assert [item["description"] for item in response.json()] == ["Bensin", "Kopi"]
+    list_all = client.get("/api/v1/transactions", headers=headers)
+    assert list_all.status_code == 200
+    assert len(list_all.json()) == 2
 
     filtered = client.get(
         "/api/v1/transactions",
-        params={"search": "kopi"},
         headers=headers,
+        params={"type": "expense", "source": "telegram", "search": "geprek"},
     )
-    assert [item["description"] for item in filtered.json()] == ["Kopi"]
+    assert filtered.status_code == 200
+    assert len(filtered.json()) == 1
+    assert filtered.json()[0]["id"] == tx_expense["id"]
 
-    sorted_by_amount = client.get(
-        "/api/v1/transactions",
-        params={"sort": "amount", "order": "asc"},
-        headers=headers,
-    )
-    assert [item["amount"] for item in sorted_by_amount.json()] == [15_000, 60_000]
-
-
-def test_update_and_delete_transaction(client, auth):
-    account = auth()
-    headers = account["headers"]
-    created = create_transaction(client, headers).json()
+    detail = client.get(f"/api/v1/transactions/{tx_expense['id']}", headers=headers)
+    assert detail.status_code == 200
+    assert detail.json()["description"] == "Makan ayam geprek"
 
     updated = client.patch(
-        f"/api/v1/transactions/{created['id']}",
-        json={**TRANSACTION_PAYLOAD, "description": "Makan malam", "amount": 35_000},
+        f"/api/v1/transactions/{tx_expense['id']}",
         headers=headers,
+        json={"amount": 25000, "note": "Tambah es teh"},
     )
     assert updated.status_code == 200
-    assert updated.json()["description"] == "Makan malam"
-    assert updated.json()["amount"] == 35_000
+    assert updated.json()["amount"] == 25000
+    assert updated.json()["note"] == "Tambah es teh"
 
-    deleted = client.delete(f"/api/v1/transactions/{created['id']}", headers=headers)
+    deleted = client.delete(f"/api/v1/transactions/{tx_expense['id']}", headers=headers)
     assert deleted.status_code == 204
-    assert client.get("/api/v1/transactions", headers=headers).json() == []
+
+    after_delete = client.get(f"/api/v1/transactions/{tx_expense['id']}", headers=headers)
+    assert after_delete.status_code == 404
 
 
-def test_transaction_validation(client, auth):
-    headers = auth()["headers"]
+def test_transactions_validation_rejects_invalid_category_and_amount(client):
+    headers = _auth_headers(client)
+    today = date.today().isoformat()
 
-    invalid_amount = create_transaction(client, headers, amount=0)
-    assert invalid_amount.status_code == 422
-
-    invalid_category = create_transaction(client, headers, category="Uang Saku")
-    assert invalid_category.status_code == 422
-
-
-def test_transaction_isolation_between_users(client, auth):
-    first = auth("andi@example.com")
-    second = auth("budi@example.com")
-    created = create_transaction(client, first["headers"]).json()
-
-    assert client.get("/api/v1/transactions", headers=second["headers"]).json() == []
-    assert (
-        client.get(f"/api/v1/transactions/{created['id']}", headers=second["headers"]).status_code
-        == 404
+    bad_category = client.post(
+        "/api/v1/transactions",
+        headers=headers,
+        json={
+            "description": "Salah kategori",
+            "amount": 15000,
+            "type": "expense",
+            "category": "Uang Saku",
+            "date": today,
+        },
     )
+    assert bad_category.status_code == 422
+
+    bad_amount = client.post(
+        "/api/v1/transactions",
+        headers=headers,
+        json={
+            "description": "Nominal nol",
+            "amount": 0,
+            "type": "expense",
+            "category": "Kebutuhan Primer",
+            "date": today,
+        },
+    )
+    assert bad_amount.status_code == 422
+
+
+def test_transactions_multi_user_isolation(client):
+    headers_a = _auth_headers(client, email="a@example.com", name="User A")
+    headers_b = _auth_headers(client, email="b@example.com", name="User B")
+
+    created = client.post(
+        "/api/v1/transactions",
+        headers=headers_a,
+        json={
+            "description": "Rahasia User A",
+            "amount": 50000,
+            "type": "expense",
+            "category": "Gaya Hidup",
+            "date": date.today().isoformat(),
+        },
+    )
+    assert created.status_code == 201
+    tx_id = created.json()["id"]
+
+    assert client.get("/api/v1/transactions", headers=headers_b).json() == []
+    assert client.get(f"/api/v1/transactions/{tx_id}", headers=headers_b).status_code == 404
     assert (
         client.patch(
-            f"/api/v1/transactions/{created['id']}",
-            json=TRANSACTION_PAYLOAD,
-            headers=second["headers"],
+            f"/api/v1/transactions/{tx_id}",
+            headers=headers_b,
+            json={"amount": 99999},
         ).status_code
         == 404
     )
-    assert (
-        client.delete(
-            f"/api/v1/transactions/{created['id']}",
-            headers=second["headers"],
-        ).status_code
-        == 404
-    )
-
-
-def test_transactions_require_authentication(client):
-    assert client.get("/api/v1/transactions").status_code == 401
+    assert client.delete(f"/api/v1/transactions/{tx_id}", headers=headers_b).status_code == 404

@@ -1,20 +1,16 @@
+from __future__ import annotations
+
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user
 from app.database import get_db
 from app.models import User
-from app.schemas.analytics import (
-    CashflowPointOut,
-    CategoryTotalOut,
-    DashboardDataOut,
-    DashboardSummaryOut,
-    PeriodPreset,
-    ReportDataOut,
-)
+from app.schemas.analytics import DashboardSummaryOut, ReportAnalyticsOut
+from app.schemas.settings import PeriodPreset
 from app.services import analytics_service
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
@@ -23,76 +19,50 @@ DbSession = Annotated[Session, Depends(get_db)]
 CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
-@router.get("/dashboard", response_model=DashboardDataOut)
-def get_dashboard(
-    current_user: CurrentUser,
-    db: DbSession,
-    preset: PeriodPreset = "30d",
-    reference: date | None = None,
-) -> DashboardDataOut:
-    return analytics_service.build_dashboard_data(
-        db,
-        current_user,
-        preset,
-        reference=reference,
-    )
-
-
-@router.get("/report", response_model=ReportDataOut)
-def get_report(
-    current_user: CurrentUser,
-    db: DbSession,
-    preset: PeriodPreset = "30d",
-    reference: date | None = None,
-) -> ReportDataOut:
-    return analytics_service.build_report_data(
-        db,
-        current_user,
-        preset,
-        reference=reference,
-    )
+def _validate_date_range(start_date: date | None, end_date: date | None) -> None:
+    if (start_date is None) != (end_date is None):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="start_date dan end_date harus diisi bersama",
+        )
+    if start_date is not None and end_date is not None and end_date < start_date:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Tanggal selesai tidak boleh sebelum tanggal mulai",
+        )
 
 
 @router.get("/summary", response_model=DashboardSummaryOut)
-def get_summary(
+def get_dashboard_summary(
     current_user: CurrentUser,
     db: DbSession,
-    preset: PeriodPreset = "30d",
-    reference: date | None = None,
+    preset: Annotated[PeriodPreset | None, Query()] = None,
+    start_date: Annotated[date | None, Query()] = None,
+    end_date: Annotated[date | None, Query()] = None,
 ) -> DashboardSummaryOut:
-    return analytics_service.build_dashboard_data(
+    _validate_date_range(start_date, end_date)
+    return analytics_service.build_dashboard_summary(
         db,
         current_user,
-        preset,
-        reference=reference,
-    ).summary
+        preset=preset,
+        start_date=start_date,
+        end_date=end_date,
+    )
 
 
-@router.get("/expenses", response_model=list[CategoryTotalOut])
-def get_expenses(
+@router.get("/report", response_model=ReportAnalyticsOut)
+def get_report_analytics(
     current_user: CurrentUser,
     db: DbSession,
-    preset: PeriodPreset = "30d",
-    reference: date | None = None,
-) -> list[CategoryTotalOut]:
-    return analytics_service.build_dashboard_data(
+    preset: Annotated[PeriodPreset | None, Query()] = None,
+    start_date: Annotated[date | None, Query()] = None,
+    end_date: Annotated[date | None, Query()] = None,
+) -> ReportAnalyticsOut:
+    _validate_date_range(start_date, end_date)
+    return analytics_service.build_report_analytics(
         db,
         current_user,
-        preset,
-        reference=reference,
-    ).categories
-
-
-@router.get("/trends", response_model=list[CashflowPointOut])
-def get_trends(
-    current_user: CurrentUser,
-    db: DbSession,
-    preset: PeriodPreset = "30d",
-    reference: date | None = None,
-) -> list[CashflowPointOut]:
-    return analytics_service.build_dashboard_data(
-        db,
-        current_user,
-        preset,
-        reference=reference,
-    ).cashflow
+        preset=preset,
+        start_date=start_date,
+        end_date=end_date,
+    )

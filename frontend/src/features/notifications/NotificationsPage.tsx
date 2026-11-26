@@ -1,5 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
-import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useMemo, useState } from 'react';
 import { Bell, BellOff, CheckCheck, Settings2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Badge } from '@/components/ui/Badge';
@@ -17,25 +16,13 @@ import { ErrorState } from '@/components/ui/ErrorState';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { useToast } from '@/components/ui/toast-context';
+import { useFinanceData } from '@/hooks/finance-data-context';
 import { cn } from '@/lib/cn';
+import { isMockApiEnabled } from '@/lib/config';
 import {
   NO_NOTIFICATIONS_MESSAGE,
   NO_UNREAD_NOTIFICATIONS_MESSAGE,
 } from '@/lib/constants';
-import { useAuth } from '@/features/auth/auth-context';
-import { DEMO_USER } from '@/mocks/users';
-import {
-  deleteNotification,
-  getNotifications,
-  markAllNotificationsRead,
-  markNotificationRead,
-} from '@/services/notifications.service';
-import {
-  createFinanceSettings,
-  getFinancePreferences,
-  getFinanceSettings,
-  updateFinancePreferences,
-} from '@/services/settings.service';
 import type {
   AppNotification,
   FinancePreferences,
@@ -63,13 +50,15 @@ const PREFERENCE_ITEMS: {
     key: 'notifyBudget',
     type: 'budget',
     label: 'Peringatan anggaran',
-    description: 'Tampilkan notifikasi saat anggaran hampir atau sudah terlampaui.',
+    description:
+      'Tampilkan notifikasi saat anggaran hampir atau sudah terlampaui.',
   },
   {
     key: 'notifyBalance',
     type: 'balance',
-    label: 'Peringatan saldo minimum',
-    description: 'Tampilkan notifikasi saat saldo mendekati batas minimum.',
+    label: 'Peringatan saldo & burn rate',
+    description:
+      'Tampilkan notifikasi saat saldo menipis atau laju pengeluaran tinggi.',
   },
   {
     key: 'notifyGoal',
@@ -81,7 +70,10 @@ const PREFERENCE_ITEMS: {
 
 function isNotificationEnabled(
   type: NotificationType,
-  preferences: FinancePreferences,
+  preferences: Pick<
+    FinancePreferences,
+    'notifyBudget' | 'notifyBalance' | 'notifyGoal'
+  >,
 ): boolean {
   if (type === 'budget') {
     return preferences.notifyBudget;
@@ -100,91 +92,28 @@ function isNotificationEnabled(
 
 export function NotificationsPage() {
   const navigate = useNavigate();
-  const { user } = useAuth();
   const { toast } = useToast();
-  const activeUser = user ?? DEMO_USER;
-  const [notifications, setNotifications] = useState<AppNotification[]>([]);
-  const [preferences, setPreferences] = useState<FinancePreferences>(() =>
-    getFinancePreferences(),
-  );
+  const {
+    notifications,
+    financeSettings,
+    isLoading,
+    error,
+    markNotificationRead,
+    markAllNotificationsRead,
+    deleteNotification,
+    saveFinanceSettings,
+  } = useFinanceData();
+  const isMock = isMockApiEnabled();
+
   const [activeTab, setActiveTab] = useState<NotificationTab>('all');
-  const [isLoading, setIsLoading] = useState(true);
   const [isMarkingAll, setIsMarkingAll] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleTabKeyDown = (
-    event: ReactKeyboardEvent<HTMLButtonElement>,
-    index: number,
-  ): void => {
-    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
-      return;
-    }
-
-    event.preventDefault();
-    let nextIndex = index;
-    if (event.key === 'ArrowLeft') {
-      nextIndex = (index - 1 + TAB_OPTIONS.length) % TAB_OPTIONS.length;
-    } else if (event.key === 'ArrowRight') {
-      nextIndex = (index + 1) % TAB_OPTIONS.length;
-    } else if (event.key === 'Home') {
-      nextIndex = 0;
-    } else {
-      nextIndex = TAB_OPTIONS.length - 1;
-    }
-
-    const tabs = Array.from(
-      event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ??
-        [],
-    );
-    setActiveTab(TAB_OPTIONS[nextIndex].value);
-    tabs[nextIndex]?.focus();
-  };
-
-  useEffect(() => {
-    let isActive = true;
-
-    Promise.all([
-      getNotifications(),
-      getFinanceSettings(createFinanceSettings(activeUser)),
-    ])
-      .then(([data, settings]) => {
-        if (isActive) {
-          setNotifications(data);
-          setPreferences({
-            period: settings.period,
-            notifyBudget: settings.notifyBudget,
-            notifyBalance: settings.notifyBalance,
-            notifyGoal: settings.notifyGoal,
-          });
-          setError(null);
-        }
-      })
-      .catch((loadError: unknown) => {
-        if (isActive) {
-          setError(
-            loadError instanceof Error
-              ? loadError.message
-              : 'Notifikasi gagal dimuat.',
-          );
-        }
-      })
-      .finally(() => {
-        if (isActive) {
-          setIsLoading(false);
-        }
-      });
-
-    return () => {
-      isActive = false;
-    };
-  }, [activeUser]);
 
   const visibleNotifications = useMemo(
     () =>
       notifications.filter((notification) =>
-        isNotificationEnabled(notification.type, preferences),
+        isNotificationEnabled(notification.type, financeSettings),
       ),
-    [notifications, preferences],
+    [notifications, financeSettings],
   );
 
   const unreadCount = visibleNotifications.filter(
@@ -202,21 +131,15 @@ export function NotificationsPage() {
     >,
     checked: boolean,
   ) => {
-    const previousPreferences = preferences;
-    const nextPreferences = { ...preferences, [key]: checked };
-
-    setPreferences(nextPreferences);
-
     try {
-      const saved = await updateFinancePreferences(nextPreferences);
-
-      setPreferences(saved);
-    } catch (saveError) {
-      setPreferences(previousPreferences);
+      await saveFinanceSettings({ [key]: checked });
+    } catch (prefError) {
       toast({
         title: 'Gagal menyimpan preferensi',
         description:
-          saveError instanceof Error ? saveError.message : 'Silakan coba lagi.',
+          prefError instanceof Error
+            ? prefError.message
+            : 'Silakan coba lagi.',
         variant: 'error',
       });
     }
@@ -224,11 +147,7 @@ export function NotificationsPage() {
 
   const handleMarkRead = async (notification: AppNotification) => {
     try {
-      const updated = await markNotificationRead(notification.id);
-
-      setNotifications((current) =>
-        current.map((item) => (item.id === updated.id ? updated : item)),
-      );
+      await markNotificationRead(notification.id);
     } catch (mutationError) {
       toast({
         title: 'Gagal menandai notifikasi',
@@ -244,11 +163,7 @@ export function NotificationsPage() {
   const handleOpen = async (notification: AppNotification) => {
     if (!notification.read) {
       try {
-        const updated = await markNotificationRead(notification.id);
-
-        setNotifications((current) =>
-          current.map((item) => (item.id === updated.id ? updated : item)),
-        );
+        await markNotificationRead(notification.id);
       } catch (mutationError) {
         toast({
           title: 'Gagal membuka notifikasi',
@@ -270,9 +185,6 @@ export function NotificationsPage() {
   const handleDelete = async (notification: AppNotification) => {
     try {
       await deleteNotification(notification.id);
-      setNotifications((current) =>
-        current.filter((item) => item.id !== notification.id),
-      );
       toast({
         title: 'Notifikasi dihapus',
         description: 'Notifikasi telah dihapus dari daftar.',
@@ -295,9 +207,6 @@ export function NotificationsPage() {
 
     try {
       await markAllNotificationsRead();
-      setNotifications((current) =>
-        current.map((notification) => ({ ...notification, read: true })),
-      );
       toast({
         title: 'Semua notifikasi dibaca',
         description: 'Daftar notifikasi sudah ditandai sebagai dibaca.',
@@ -324,7 +233,7 @@ export function NotificationsPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Notifikasi"
-        description="Pantau peringatan anggaran, saldo, dan progres target tabunganmu."
+        description="Pantau peringatan dini anggaran, ketahanan saldo, dan progres target tabunganmu."
         actions={
           <>
             <Badge variant={unreadCount > 0 ? 'primary' : 'neutral'}>
@@ -352,7 +261,9 @@ export function NotificationsPage() {
             <div>
               <CardTitle>Preferensi Notifikasi</CardTitle>
               <CardDescription>
-                Pilih jenis notifikasi yang ingin ditampilkan pada versi demo.
+                {isMock
+                  ? 'Pilih jenis notifikasi yang ingin ditampilkan pada versi demo.'
+                  : 'Atur jenis peringatan otomatis yang dicatat dan dikirimkan ke Telegram.'}
               </CardDescription>
             </div>
           </div>
@@ -370,16 +281,16 @@ export function NotificationsPage() {
                   </span>
                 </span>
               }
-              checked={preferences[item.key]}
-              onChange={(event) => {
-                void updatePreference(item.key, event.target.checked);
-              }}
+              checked={financeSettings[item.key]}
+              onChange={(event) =>
+                void updatePreference(item.key, event.target.checked)
+              }
             />
           ))}
           {hiddenByPreferenceCount > 0 ? (
             <p className="text-xs text-ink-secondary sm:col-span-3">
               {hiddenByPreferenceCount} notifikasi disembunyikan oleh preferensi
-              saat ini. Informasi umum tetap selalu ditampilkan.
+              saat ini. Evaluasi bulanan tetap selalu ditampilkan.
             </p>
           ) : null}
         </CardContent>
@@ -391,7 +302,7 @@ export function NotificationsPage() {
           role="tablist"
           aria-label="Filter notifikasi"
         >
-          {TAB_OPTIONS.map((tab, tabIndex) => {
+          {TAB_OPTIONS.map((tab) => {
             const isActive = tab.value === activeTab;
             const count =
               tab.value === 'unread'
@@ -401,14 +312,10 @@ export function NotificationsPage() {
             return (
               <button
                 key={tab.value}
-                id={`notification-tab-${tab.value}`}
                 type="button"
                 role="tab"
                 aria-selected={isActive}
-                aria-controls="notification-panel"
-                tabIndex={isActive ? 0 : -1}
                 onClick={() => setActiveTab(tab.value)}
-                onKeyDown={(event) => handleTabKeyDown(event, tabIndex)}
                 className={cn(
                   'inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors sm:text-sm',
                   isActive
@@ -432,63 +339,56 @@ export function NotificationsPage() {
           })}
         </div>
 
-        <div
-          id="notification-panel"
-          role="tabpanel"
-          aria-labelledby={`notification-tab-${activeTab}`}
-          className="flex flex-col gap-3"
-        >
-          {isLoading ? (
-            <Card>
-              <LoadingState message="Memuat notifikasi..." />
-            </Card>
-          ) : error ? (
-            <Card>
-              <ErrorState message={error} />
-            </Card>
-          ) : notifications.length === 0 ? (
-            <Card>
-              <EmptyState
-                icon={BellOff}
-                title="Belum ada notifikasi"
-                description={NO_NOTIFICATIONS_MESSAGE}
+        {isLoading ? (
+          <Card>
+            <LoadingState message="Memuat notifikasi..." />
+          </Card>
+        ) : error ? (
+          <Card>
+            <ErrorState message={error} />
+          </Card>
+        ) : notifications.length === 0 ? (
+          <Card>
+            <EmptyState
+              icon={BellOff}
+              title="Belum ada notifikasi"
+              description={NO_NOTIFICATIONS_MESSAGE}
+            />
+          </Card>
+        ) : visibleNotifications.length === 0 ? (
+          <Card>
+            <EmptyState
+              icon={BellOff}
+              title="Tidak ada notifikasi yang ditampilkan"
+              description="Semua jenis notifikasi sedang dimatikan pada preferensi. Aktifkan salah satu preferensi untuk melihat notifikasi terkait."
+            />
+          </Card>
+        ) : displayedNotifications.length === 0 ? (
+          <Card>
+            <EmptyState
+              icon={Bell}
+              title="Semua notifikasi sudah dibaca"
+              description={NO_UNREAD_NOTIFICATIONS_MESSAGE}
+              action={
+                <Button variant="outline" onClick={() => setActiveTab('all')}>
+                  Lihat semua notifikasi
+                </Button>
+              }
+            />
+          </Card>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {displayedNotifications.map((notification) => (
+              <NotificationItem
+                key={notification.id}
+                notification={notification}
+                onOpen={handleOpen}
+                onMarkRead={handleMarkRead}
+                onDelete={handleDelete}
               />
-            </Card>
-          ) : visibleNotifications.length === 0 ? (
-            <Card>
-              <EmptyState
-                icon={BellOff}
-                title="Tidak ada notifikasi yang ditampilkan"
-                description="Semua jenis notifikasi sedang dimatikan pada preferensi. Aktifkan salah satu preferensi untuk melihat notifikasi terkait."
-              />
-            </Card>
-          ) : displayedNotifications.length === 0 ? (
-            <Card>
-              <EmptyState
-                icon={Bell}
-                title="Semua notifikasi sudah dibaca"
-                description={NO_UNREAD_NOTIFICATIONS_MESSAGE}
-                action={
-                  <Button variant="outline" onClick={() => setActiveTab('all')}>
-                    Lihat semua notifikasi
-                  </Button>
-                }
-              />
-            </Card>
-          ) : (
-            <div className="flex flex-col gap-3">
-              {displayedNotifications.map((notification) => (
-                <NotificationItem
-                  key={notification.id}
-                  notification={notification}
-                  onOpen={handleOpen}
-                  onMarkRead={handleMarkRead}
-                  onDelete={handleDelete}
-                />
-              ))}
-            </div>
-          )}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

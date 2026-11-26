@@ -1,16 +1,19 @@
 from __future__ import annotations
 
-from typing import Annotated
+import secrets
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-from pydantic import ValidationError
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.core.dependencies import get_current_user
 from app.database import get_db
 from app.models import User
-from app.schemas.telegram import TelegramLinkTokenOut, TelegramStatusOut, TelegramUpdateIn
-from app.services import rule_engine, telegram_service
+from app.modules.telegram.client import get_telegram_client
+from app.modules.telegram.handlers import handle_telegram_update
+from app.schemas.telegram import TelegramLinkTokenOut, TelegramStatusOut, TelegramWebhookAck
+from app.services import telegram_service
 
 router = APIRouter(prefix="/telegram", tags=["telegram"])
 
@@ -19,70 +22,48 @@ CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
 @router.get("/status", response_model=TelegramStatusOut)
-def get_telegram_status(current_user: CurrentUser, db: DbSession) -> TelegramStatusOut:
-    return telegram_service.get_status(db, current_user)
+def get_status(current_user: CurrentUser) -> TelegramStatusOut:
+    return telegram_service.get_telegram_status(current_user)
 
 
-@router.post("/link-token", response_model=TelegramLinkTokenOut, status_code=201)
-def create_telegram_link_token(
+@router.post(
+    "/link-token", response_model=TelegramLinkTokenOut, status_code=status.HTTP_201_CREATED
+)
+def create_link_token(
     current_user: CurrentUser,
     db: DbSession,
 ) -> TelegramLinkTokenOut:
-    return telegram_service.create_link_token(db, current_user)
+    return telegram_service.generate_link_token(db, current_user)
 
 
 @router.delete("/unlink", response_model=TelegramStatusOut)
-def unlink_telegram(current_user: CurrentUser, db: DbSession) -> TelegramStatusOut:
+def unlink_account(
+    current_user: CurrentUser,
+    db: DbSession,
+) -> TelegramStatusOut:
     return telegram_service.unlink_telegram(db, current_user)
 
 
-@router.post("/webhook")
+@router.post("/webhook", response_model=TelegramWebhookAck)
 async def telegram_webhook(
-    request: Request,
+    update: Annotated[dict[str, Any], Body()],
     db: DbSession,
-    x_telegram_bot_api_secret_token: Annotated[
+    secret_header: Annotated[
         str | None,
         Header(alias="X-Telegram-Bot-Api-Secret-Token"),
     ] = None,
-) -> dict[str, bool]:
-    telegram_service.verify_webhook_secret(
-        x_telegram_bot_api_secret_token,
-        request=request,
-        db=db,
-    )
-
-    try:
-        payload = await request.json()
-    except Exception as exc:
+) -> TelegramWebhookAck:
+    settings = get_settings()
+    expected_secret = settings.telegram_webhook_secret
+    if expected_secret and (
+        not secret_header or not secrets.compare_digest(secret_header, expected_secret)
+    ):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Payload webhook Telegram tidak valid",
-        ) from exc
-
-    try:
-        update = TelegramUpdateIn.model_validate(payload)
-    except ValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=exc.errors(),
-        ) from exc
-
-    if not telegram_service.claim_update(db, update.update_id):
-        return {"ok": True}
-
-    try:
-        reply = telegram_service.process_update(
-            db,
-            update.model_dump(by_alias=True, exclude_none=True),
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Secret token webhook tidak valid",
         )
-        if reply is not None:
-            await telegram_service.send_message(reply.chat_id, reply.text)
-            if reply.user_id is not None:
-                user = db.get(User, reply.user_id)
-                if user is not None:
-                    await rule_engine.evaluate_and_notify(db, user)
-    except Exception:
-        telegram_service.release_update(db, update_id=update.update_id)
-        raise
 
-    return {"ok": True}
+    client = get_telegram_client()
+    if client is not None:
+        await handle_telegram_update(db, update, client)
+    return TelegramWebhookAck(ok=True)

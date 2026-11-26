@@ -2,17 +2,20 @@ from __future__ import annotations
 
 import uuid
 from datetime import date
-from typing import Annotated, Literal
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
-from app.core.categories import ExpenseCategory, IncomeCategory, TransactionType
+from app.core.categories import TransactionSource, TransactionType
 from app.core.dependencies import get_current_user
 from app.database import get_db
 from app.models import User
+from app.modules.telegram.notifier import dispatch_notifications_to_telegram
+from app.schemas.settings import PeriodPreset
 from app.schemas.transaction import TransactionCreate, TransactionOut, TransactionUpdate
-from app.services import rule_engine, transaction_service
+from app.services import transaction_service
+from app.services.errors import ResourceNotFoundError, ValidationDomainError
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
 
@@ -24,36 +27,53 @@ CurrentUser = Annotated[User, Depends(get_current_user)]
 def list_transactions(
     current_user: CurrentUser,
     db: DbSession,
-    search: Annotated[str | None, Query(max_length=200)] = None,
-    transaction_type: Annotated[TransactionType | None, Query(alias="type")] = None,
-    category: ExpenseCategory | IncomeCategory | None = None,
-    date_from: Annotated[date | None, Query(alias="dateFrom")] = None,
-    date_to: Annotated[date | None, Query(alias="dateTo")] = None,
-    sort: Literal["date", "amount"] = "date",
-    order: Literal["asc", "desc"] = "desc",
+    type: Annotated[TransactionType | None, Query()] = None,
+    category: Annotated[str | None, Query()] = None,
+    source: Annotated[TransactionSource | None, Query()] = None,
+    search: Annotated[str | None, Query()] = None,
+    start_date: Annotated[date | None, Query()] = None,
+    end_date: Annotated[date | None, Query()] = None,
+    preset: Annotated[PeriodPreset | None, Query()] = None,
 ) -> list[TransactionOut]:
-    return transaction_service.list_transactions(
+    if start_date is not None and end_date is not None and end_date < start_date:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Tanggal selesai tidak boleh sebelum tanggal mulai",
+        )
+
+    items = transaction_service.list_transactions(
         db,
         current_user.id,
-        search=search,
-        transaction_type=transaction_type,
+        tx_type=type,
         category=category,
-        date_from=date_from,
-        date_to=date_to,
-        sort_field=sort,
-        sort_direction=order,
+        source=source,
+        search=search,
+        start_date=start_date,
+        end_date=end_date,
+        preset=preset,
     )
+    return [TransactionOut.model_validate(item) for item in items]
 
 
 @router.post("", response_model=TransactionOut, status_code=status.HTTP_201_CREATED)
-async def create_transaction(
+def create_transaction(
     payload: TransactionCreate,
+    background_tasks: BackgroundTasks,
     current_user: CurrentUser,
     db: DbSession,
 ) -> TransactionOut:
-    result = transaction_service.create_transaction(db, current_user.id, payload)
-    await rule_engine.evaluate_and_notify(db, current_user)
-    return result
+    item, eval_res = transaction_service.create_transaction_with_evaluation(
+        db,
+        current_user.id,
+        payload,
+    )
+    if eval_res.new_notifications:
+        background_tasks.add_task(
+            dispatch_notifications_to_telegram,
+            current_user.id,
+            [n.id for n in eval_res.new_notifications],
+        )
+    return TransactionOut.model_validate(item)
 
 
 @router.get("/{transaction_id}", response_model=TransactionOut)
@@ -62,32 +82,65 @@ def get_transaction(
     current_user: CurrentUser,
     db: DbSession,
 ) -> TransactionOut:
-    return transaction_service.get_transaction(db, current_user.id, transaction_id)
+    try:
+        item = transaction_service.get_transaction(db, current_user.id, transaction_id)
+    except ResourceNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return TransactionOut.model_validate(item)
 
 
 @router.patch("/{transaction_id}", response_model=TransactionOut)
-async def update_transaction(
+def update_transaction(
     transaction_id: uuid.UUID,
     payload: TransactionUpdate,
+    background_tasks: BackgroundTasks,
     current_user: CurrentUser,
     db: DbSession,
 ) -> TransactionOut:
-    result = transaction_service.update_transaction(
-        db,
-        current_user.id,
-        transaction_id,
-        payload,
-    )
-    await rule_engine.evaluate_and_notify(db, current_user)
-    return result
+    try:
+        item, eval_res = transaction_service.update_transaction_with_evaluation(
+            db,
+            current_user.id,
+            transaction_id,
+            payload,
+        )
+    except ResourceNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValidationDomainError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    if eval_res.new_notifications:
+        background_tasks.add_task(
+            dispatch_notifications_to_telegram,
+            current_user.id,
+            [n.id for n in eval_res.new_notifications],
+        )
+    return TransactionOut.model_validate(item)
 
 
 @router.delete("/{transaction_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_transaction(
+def delete_transaction(
     transaction_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
     current_user: CurrentUser,
     db: DbSession,
 ) -> Response:
-    transaction_service.delete_transaction(db, current_user.id, transaction_id)
-    await rule_engine.evaluate_and_notify(db, current_user)
+    try:
+        eval_res = transaction_service.delete_transaction_with_evaluation(
+            db,
+            current_user.id,
+            transaction_id,
+        )
+    except ResourceNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    if eval_res.new_notifications:
+        background_tasks.add_task(
+            dispatch_notifications_to_telegram,
+            current_user.id,
+            [n.id for n in eval_res.new_notifications],
+        )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -3,13 +3,3 @@
 
 # Ada Library Information
 *.ali
-
-# Deployment secrets and backups
-deploy/.env
-deploy/backups/
-
-# Playwright
-frontend/test-results/
-frontend/playwright-report/
-frontend/blob-report/
-frontend/playwright/.cache/

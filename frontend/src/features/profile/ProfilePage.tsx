@@ -13,8 +13,8 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { useToast } from '@/components/ui/toast-context';
 import { useAuth } from '@/features/auth/auth-context';
 import { useLogout } from '@/features/auth/useLogout';
+import { isMockApiEnabled } from '@/lib/config';
 import { DEMO_USER } from '@/mocks/users';
-import { MOCK_API_ENABLED } from '@/lib/config';
 import { getInitials } from '@/utils/text';
 import { PasswordForm } from './components/PasswordForm';
 import { ProfileForm } from './components/ProfileForm';
@@ -24,28 +24,28 @@ export function ProfilePage() {
   const { user, updateProfile, changePassword } = useAuth();
   const logout = useLogout();
   const { toast } = useToast();
+  const isMock = isMockApiEnabled();
   const activeUser = user ?? DEMO_USER;
 
-  const handleProfileSubmit = async (
-    values: ProfileFormValues,
-  ): Promise<void> => {
+  const handleProfileSubmit = async (values: ProfileFormValues) => {
     try {
       await updateProfile({
         name: values.name,
         email: values.email,
-        avatarUrl:
-          values.avatarUrl === undefined ? undefined : values.avatarUrl.trim() || null,
+        avatarUrl: values.avatarUrl?.trim() || undefined,
       });
       toast({
         title: 'Profil diperbarui',
         description: 'Perubahan informasi akun telah disimpan.',
         variant: 'success',
       });
-    } catch (saveError) {
+    } catch (profileError) {
       toast({
         title: 'Gagal memperbarui profil',
         description:
-          saveError instanceof Error ? saveError.message : 'Silakan coba lagi.',
+          profileError instanceof Error
+            ? profileError.message
+            : 'Silakan coba lagi.',
         variant: 'error',
       });
     }
@@ -55,22 +55,27 @@ export function ProfilePage() {
     values: PasswordFormValues,
   ): Promise<void> => {
     try {
-      await changePassword(values.currentPassword, values.newPassword);
-      toast({
-        title: 'Password diperbarui',
-        description: MOCK_API_ENABLED
-          ? 'Password demo untuk sesi ini telah diubah.'
-          : 'Password akunmu telah berhasil diubah.',
-        variant: 'success',
+      await changePassword({
+        currentPassword: values.currentPassword,
+        newPassword: values.newPassword,
       });
-    } catch (saveError) {
+      toast({
+        title: isMock
+          ? 'Simulasi ubah password berhasil'
+          : 'Password berhasil diperbarui',
+        description: isMock
+          ? 'Mode demo belum mengubah kredensial login.'
+          : 'Gunakan password baru saat masuk pada sesi berikutnya.',
+        variant: isMock ? 'info' : 'success',
+      });
+    } catch (pwError) {
       toast({
         title: 'Gagal mengubah password',
         description:
-          saveError instanceof Error ? saveError.message : 'Silakan coba lagi.',
+          pwError instanceof Error ? pwError.message : 'Silakan coba lagi.',
         variant: 'error',
       });
-      throw saveError;
+      throw pwError;
     }
   };
 
@@ -78,12 +83,10 @@ export function ProfilePage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Profil"
-        description="Kelola informasi akun dan keamanan akunmu."
+        description="Kelola informasi profil dan keamanan akun SakuCampus milikmu."
         actions={
           <>
-            <Badge variant={MOCK_API_ENABLED ? 'primary' : 'success'}>
-              {MOCK_API_ENABLED ? 'Akun demo' : 'Tersinkron'}
-            </Badge>
+            {isMock ? <Badge variant="primary">Akun demo</Badge> : null}
             <Button variant="outline" onClick={logout}>
               <LogOut className="h-4 w-4" aria-hidden="true" />
               Keluar
@@ -115,9 +118,9 @@ export function ProfilePage() {
             </p>
             <p className="mt-1 text-xs text-ink-secondary">
               Mata uang {activeUser.currency} ·{' '}
-              {MOCK_API_ENABLED
+              {isMock
                 ? 'Data tersimpan pada browser'
-                : 'Akun tersinkron dengan server'}
+                : 'Akun aktif tersinkronisasi'}
             </p>
           </div>
         </div>
@@ -156,22 +159,17 @@ export function ProfilePage() {
               <div>
                 <CardTitle>Keamanan</CardTitle>
                 <CardDescription>
-                  {MOCK_API_ENABLED
-                    ? 'Ubah password melalui simulasi antarmuka demo.'
-                    : 'Perbarui password akunmu secara aman.'}
+                  Perbarui password akun secara berkala untuk menjaga keamanan.
                 </CardDescription>
               </div>
             </div>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
-            <Alert
-              variant={MOCK_API_ENABLED ? 'info' : 'warning'}
-              title={MOCK_API_ENABLED ? 'Simulasi keamanan' : 'Keamanan akun'}
-            >
-              {MOCK_API_ENABLED
-                ? 'Versi demo belum terhubung ke backend. Password demo hanya berubah untuk sesi ini dan akan kembali saat halaman dimuat ulang.'
-                : 'Setelah password diubah, gunakan password baru untuk login berikutnya. Sesi saat ini tetap aktif.'}
-            </Alert>
+            {isMock ? (
+              <Alert variant="info" title="Simulasi keamanan">
+                Mode demo belum mengubah kredensial login akun contoh.
+              </Alert>
+            ) : null}
             <PasswordForm onSubmit={handlePasswordSubmit} />
           </CardContent>
         </Card>
@@ -181,9 +179,8 @@ export function ProfilePage() {
         <div>
           <p className="font-semibold text-ink">Keluar dari akun</p>
           <p className="mt-1 text-sm text-ink-secondary">
-            {MOCK_API_ENABLED
-              ? 'Kamu dapat masuk kembali menggunakan akun demo yang tertera pada halaman login.'
-              : 'Kamu dapat masuk kembali menggunakan email dan password akunmu.'}
+            Akhiri sesi aktif pada perangkat ini. Kamu dapat masuk kembali kapan
+            saja.
           </p>
         </div>
         <Button variant="danger" onClick={logout}>

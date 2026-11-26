@@ -22,7 +22,7 @@ import { StatCard } from '@/components/ui/StatCard';
 import { useToast } from '@/components/ui/toast-context';
 import { useFinanceData } from '@/hooks/finance-data-context';
 import { EXPENSE_CATEGORIES } from '@/lib/categories';
-import { MOCK_API_ENABLED } from '@/lib/config';
+import { isMockApiEnabled } from '@/lib/config';
 import { NO_BUDGETS_MESSAGE } from '@/lib/constants';
 import type { Budget, BudgetInput, ExpenseCategory } from '@/types';
 import { computeBudgetUsage, getBudgetStatus } from '@/utils/calculations';
@@ -42,6 +42,7 @@ export function BudgetsPage() {
     deleteBudget,
   } = useFinanceData();
   const { toast } = useToast();
+  const isMock = isMockApiEnabled();
 
   const [formState, setFormState] = useState<{
     open: boolean;
@@ -80,19 +81,13 @@ export function BudgetsPage() {
   );
   const totalRemaining = totalLimit - totalUsed;
 
+  // Allow any expense category for different non-overlapping periods!
   const availableCategories = useMemo<ExpenseCategory[]>(() => {
     if (formState.budget) {
       return [formState.budget.category];
     }
-
-    const budgetedCategories = new Set(budgets.map((budget) => budget.category));
-
-    return EXPENSE_CATEGORIES.filter(
-      (category) => !budgetedCategories.has(category),
-    );
-  }, [budgets, formState.budget]);
-
-  const canAddBudget = budgets.length < EXPENSE_CATEGORIES.length;
+    return EXPENSE_CATEGORIES;
+  }, [formState.budget]);
 
   const openCreateForm = () => {
     setFormState({ open: true, budget: null });
@@ -180,10 +175,8 @@ export function BudgetsPage() {
         description="Atur batas pengeluaran per kategori dan pantau realisasinya."
         actions={
           <>
-            <Badge variant={MOCK_API_ENABLED ? 'primary' : 'success'}>
-              {MOCK_API_ENABLED ? 'Data demo' : 'Tersinkron'}
-            </Badge>
-            <Button onClick={openCreateForm} disabled={!canAddBudget}>
+            {isMock ? <Badge variant="primary">Data demo</Badge> : null}
+            <Button onClick={openCreateForm}>
               <Plus className="h-4 w-4" aria-hidden="true" />
               Tambah Anggaran
             </Button>
@@ -220,7 +213,7 @@ export function BudgetsPage() {
               label="Total Anggaran"
               value={formatCurrency(totalLimit)}
               icon={Wallet}
-              hint={`Dari ${budgets.length} kategori`}
+              hint={`Dari ${budgets.length} anggaran`}
             />
             <StatCard
               label="Total Terpakai"
@@ -291,16 +284,14 @@ export function BudgetsPage() {
             : 'Buat batas pengeluaran untuk satu kategori pada periode tertentu.'
         }
       >
-        {availableCategories.length > 0 || formState.budget ? (
-          <BudgetForm
-            key={formState.budget?.id ?? 'create'}
-            mode={formState.budget ? 'edit' : 'create'}
-            availableCategories={availableCategories}
-            initialBudget={formState.budget ?? undefined}
-            onSubmit={handleSubmit}
-            onCancel={closeForm}
-          />
-        ) : null}
+        <BudgetForm
+          key={formState.budget?.id ?? 'create'}
+          mode={formState.budget ? 'edit' : 'create'}
+          availableCategories={availableCategories}
+          initialBudget={formState.budget ?? undefined}
+          onSubmit={handleSubmit}
+          onCancel={closeForm}
+        />
       </Modal>
 
       <ConfirmDialog

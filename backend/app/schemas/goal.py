@@ -2,44 +2,36 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
-from typing import Annotated, Self
+from typing import Annotated
 
-from pydantic import Field, StringConstraints, field_validator, model_validator
+from pydantic import Field, StringConstraints
 
-from app.core.constants import MAX_MONEY_AMOUNT
 from app.schemas.base import CamelModel
 
 GoalName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)]
-ContributionNote = Annotated[str, StringConstraints(strip_whitespace=True, max_length=1000)]
+ContributionNote = Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)]
 
 
-class GoalPayload(CamelModel):
+class GoalCreate(CamelModel):
     name: GoalName
-    target_amount: int = Field(gt=0, le=MAX_MONEY_AMOUNT)
+    target_amount: int = Field(gt=0)
     deadline: date
 
 
-class GoalCreate(GoalPayload):
-    pass
-
-
-class GoalUpdate(GoalPayload):
-    pass
+class GoalUpdate(CamelModel):
+    name: GoalName | None = None
+    target_amount: int | None = Field(default=None, gt=0)
+    deadline: date | None = None
 
 
 class GoalContributionCreate(CamelModel):
-    amount: int = Field(gt=0, le=MAX_MONEY_AMOUNT)
+    amount: int = Field(gt=0)
     note: ContributionNote | None = None
-
-    @model_validator(mode="after")
-    def normalize_note(self) -> Self:
-        if self.note == "":
-            self.note = None
-        return self
 
 
 class GoalContributionOut(CamelModel):
     id: uuid.UUID
+    goal_id: uuid.UUID
     amount: int
     contributed_at: datetime
     note: str | None = None
@@ -51,8 +43,3 @@ class GoalOut(CamelModel):
     target_amount: int
     saved_amount: int
     deadline: date
-
-    @field_validator("saved_amount")
-    @classmethod
-    def validate_saved_amount(cls, value: int) -> int:
-        return max(0, value)

@@ -5,10 +5,13 @@ from typing import Literal
 
 from app.schemas.base import CamelModel
 from app.schemas.budget import BudgetOut
+from app.schemas.goal import GoalOut
+from app.schemas.rule_engine import RuleAlertOut
+from app.schemas.settings import PeriodPreset
 from app.schemas.transaction import TransactionOut
 
-PeriodPreset = Literal["7d", "30d", "month"]
 BudgetStatus = Literal["safe", "warning", "exceeded"]
+FinancialStatus = Literal["normal", "warning", "critical"]
 InsightTone = Literal["positive", "warning", "danger", "info"]
 
 
@@ -16,15 +19,6 @@ class PeriodRangeOut(CamelModel):
     start: date
     end: date
     label: str
-
-
-class DashboardSummaryOut(CamelModel):
-    balance: int
-    min_balance: int
-    income: int
-    expense: int
-    net: int
-    burn_rate: int
 
 
 class CategoryTotalOut(CamelModel):
@@ -55,14 +49,28 @@ class FinancialInsightOut(CamelModel):
     description: str
 
 
-class DashboardDataOut(CamelModel):
+class DashboardMetricsOut(CamelModel):
+    balance: int
+    min_balance: int
+    total_income: int
+    total_expense: int
+    net_cash_flow: int
+    daily_burn_rate: int
+    runway_days: float | None
+    safe_daily_spend: int
+    financial_status: FinancialStatus
+
+
+class DashboardSummaryOut(CamelModel):
     period: PeriodPreset
     range: PeriodRangeOut
-    summary: DashboardSummaryOut
+    summary: DashboardMetricsOut
     cashflow: list[CashflowPointOut]
     categories: list[CategoryTotalOut]
     budgets: list[BudgetOverviewItemOut]
+    goals: list[GoalOut]
     insights: list[FinancialInsightOut]
+    rule_alerts: list[RuleAlertOut]
     recent_transactions: list[TransactionOut]
     transaction_count: int
 
@@ -82,11 +90,20 @@ class ReportComparisonOut(CamelModel):
     net_change: float | None
 
 
-class ReportDataOut(CamelModel):
+class ReportAnalyticsOut(CamelModel):
     range: PeriodRangeOut
     previous_range: PeriodRangeOut
+    balance: int
+    min_balance: int
+    daily_burn_rate: int
+    runway_days: float | None
+    safe_daily_spend: int
+    financial_status: FinancialStatus
     summary: ReportSummaryOut
     comparison: ReportComparisonOut
     cashflow: list[CashflowPointOut]
     categories: list[CategoryTotalOut]
+    budgets: list[BudgetOverviewItemOut]
+    goals: list[GoalOut]
+    rule_alerts: list[RuleAlertOut]
     transactions: list[TransactionOut]

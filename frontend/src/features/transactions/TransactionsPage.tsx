@@ -28,7 +28,7 @@ import {
   TRANSACTION_TYPE_LABELS,
 } from '@/lib/categories';
 import { cn } from '@/lib/cn';
-import { DEFAULT_PAGE_SIZE, MOCK_API_ENABLED } from '@/lib/config';
+import { DEFAULT_PAGE_SIZE, isMockApiEnabled } from '@/lib/config';
 import { NO_TRANSACTIONS_MESSAGE } from '@/lib/constants';
 import { TRANSACTION_VISUALS } from '@/lib/transaction-visuals';
 import type { Transaction, TransactionCategory, TransactionInput } from '@/types';
@@ -114,6 +114,7 @@ export function TransactionsPage() {
     deleteTransaction,
   } = useFinanceData();
   const { toast } = useToast();
+  const isMock = isMockApiEnabled();
 
   const [filters, setFilters] = useState<TransactionFilterValues>(
     DEFAULT_TRANSACTION_FILTERS,
@@ -301,9 +302,7 @@ export function TransactionsPage() {
         description="Catat, cari, dan kelola seluruh transaksi pemasukan dan pengeluaran."
         actions={
           <>
-            <Badge variant={MOCK_API_ENABLED ? 'primary' : 'success'}>
-              {MOCK_API_ENABLED ? 'Data demo' : 'Tersinkron'}
-            </Badge>
+            {isMock ? <Badge variant="primary">Data demo</Badge> : null}
             <Button onClick={openCreateForm}>
               <Plus className="h-4 w-4" aria-hidden="true" />
               Tambah Transaksi
@@ -518,9 +517,20 @@ export function TransactionsPage() {
               <div className="flex items-center justify-between gap-4 px-4 py-2.5">
                 <dt className="text-sm text-ink-secondary">Sumber</dt>
                 <dd className="text-sm font-medium text-ink">
-                  {detail.source === 'telegram' ? 'Telegram' : 'Website'}
+                  {detail.source === 'telegram' ? 'Telegram' : 'Manual (Web)'}
                 </dd>
               </div>
+              {detail.rawText ? (
+                <div className="flex items-start justify-between gap-4 px-4 py-2.5">
+                  <dt className="text-sm text-ink-secondary">Pesan Asli NLP</dt>
+                  <dd className="max-w-[65%] text-right font-mono text-xs font-medium text-ink">
+                    &ldquo;{detail.rawText}&rdquo;
+                    {typeof detail.nlpConfidence === 'number'
+                      ? ` (${Math.round(detail.nlpConfidence * 100)}%)`
+                      : ''}
+                  </dd>
+                </div>
+              ) : null}
               {detail.note ? (
                 <div className="flex items-start justify-between gap-4 px-4 py-2.5">
                   <dt className="text-sm text-ink-secondary">Catatan</dt>

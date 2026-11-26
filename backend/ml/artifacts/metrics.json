@@ -1,0 +1,211 @@
+{
+  "generatedAt": "2026-11-26T17:29:17.784644+00:00",
+  "dataset": {
+    "totalRowsBeforeDedup": 1100,
+    "totalUniqueRows": 1100,
+    "trainSize": 880,
+    "testSize": 220,
+    "numClasses": 13,
+    "classDistribution": {
+      "expense::Gaya Hidup": 125,
+      "expense::Kebutuhan Primer": 125,
+      "expense::Kesehatan": 90,
+      "expense::Lainnya": 90,
+      "expense::Pendidikan": 100,
+      "expense::Tagihan": 90,
+      "expense::Transportasi": 100,
+      "income::Beasiswa": 60,
+      "income::Gaji/Part-time": 70,
+      "income::Hadiah": 60,
+      "income::Lainnya": 60,
+      "income::Uang Saku": 70,
+      "transfer::Lainnya": 60
+    }
+  },
+  "selectedModel": "Multinomial Naive Bayes",
+  "selectedMetrics": {
+    "accuracy": 0.9955,
+    "macroPrecision": 0.9941,
+    "macroRecall": 0.9957,
+    "macroF1": 0.9947,
+    "weightedF1": 0.9955
+  },
+  "models": [
+    {
+      "modelName": "Multinomial Naive Bayes",
+      "accuracy": 0.9955,
+      "macroPrecision": 0.9941,
+      "macroRecall": 0.9957,
+      "macroF1": 0.9947,
+      "weightedF1": 0.9955,
+      "perClass": {
+        "expense::Gaya Hidup": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1Score": 1.0,
+          "support": 25
+        },
+        "expense::Kebutuhan Primer": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1Score": 1.0,
+          "support": 25
+        },
+        "expense::Kesehatan": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1Score": 1.0,
+          "support": 18
+        },
+        "expense::Lainnya": {
+          "precision": 1.0,
+          "recall": 0.9444,
+          "f1Score": 0.9714,
+          "support": 18
+        },
+        "expense::Pendidikan": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1Score": 1.0,
+          "support": 20
+        },
+        "expense::Tagihan": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1Score": 1.0,
+          "support": 18
+        },
+        "expense::Transportasi": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1Score": 1.0,
+          "support": 20
+        },
+        "income::Beasiswa": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1Score": 1.0,
+          "support": 12
+        },
+        "income::Gaji/Part-time": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1Score": 1.0,
+          "support": 14
+        },
+        "income::Hadiah": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1Score": 1.0,
+          "support": 12
+        },
+        "income::Lainnya": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1Score": 1.0,
+          "support": 12
+        },
+        "income::Uang Saku": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1Score": 1.0,
+          "support": 14
+        },
+        "transfer::Lainnya": {
+          "precision": 0.9231,
+          "recall": 1.0,
+          "f1Score": 0.96,
+          "support": 12
+        }
+      }
+    },
+    {
+      "modelName": "Random Forest",
+      "accuracy": 0.9818,
+      "macroPrecision": 0.9834,
+      "macroRecall": 0.9783,
+      "macroF1": 0.9804,
+      "weightedF1": 0.9817,
+      "perClass": {
+        "expense::Gaya Hidup": {
+          "precision": 0.9615,
+          "recall": 1.0,
+          "f1Score": 0.9804,
+          "support": 25
+        },
+        "expense::Kebutuhan Primer": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1Score": 1.0,
+          "support": 25
+        },
+        "expense::Kesehatan": {
+          "precision": 1.0,
+          "recall": 0.9444,
+          "f1Score": 0.9714,
+          "support": 18
+        },
+        "expense::Lainnya": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1Score": 1.0,
+          "support": 18
+        },
+        "expense::Pendidikan": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1Score": 1.0,
+          "support": 20
+        },
+        "expense::Tagihan": {
+          "precision": 0.9,
+          "recall": 1.0,
+          "f1Score": 0.9474,
+          "support": 18
+        },
+        "expense::Transportasi": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1Score": 1.0,
+          "support": 20
+        },
+        "income::Beasiswa": {
+          "precision": 1.0,
+          "recall": 0.9167,
+          "f1Score": 0.9565,
+          "support": 12
+        },
+        "income::Gaji/Part-time": {
+          "precision": 0.9231,
+          "recall": 0.8571,
+          "f1Score": 0.8889,
+          "support": 14
+        },
+        "income::Hadiah": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1Score": 1.0,
+          "support": 12
+        },
+        "income::Lainnya": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1Score": 1.0,
+          "support": 12
+        },
+        "income::Uang Saku": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1Score": 1.0,
+          "support": 14
+        },
+        "transfer::Lainnya": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1Score": 1.0,
+          "support": 12
+        }
+      }
+    }
+  ]
+}

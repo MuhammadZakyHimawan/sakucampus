@@ -1,6 +1,6 @@
 import { Wallet } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { APP_DESCRIPTION, APP_NAME, MOCK_API_ENABLED } from '@/lib/config';
+import { APP_DESCRIPTION, APP_NAME } from '@/lib/config';
 import { publicNavItems } from '@/lib/navigation';
 
 export function PublicFooter() {
@@ -68,10 +68,8 @@ export function PublicFooter() {
       </div>
 
       <div className="border-t border-border px-4 py-4 text-center text-xs text-ink-secondary">
-        © {new Date().getFullYear()} {APP_NAME}.{' '}
-        {MOCK_API_ENABLED
-          ? 'Aplikasi ini menampilkan data demo.'
-          : 'Data akun tersinkron dengan backend.'}
+        © {new Date().getFullYear()} {APP_NAME}. Semua data pada aplikasi ini
+        adalah data demo.
       </div>
     </footer>
   );

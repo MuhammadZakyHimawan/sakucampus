@@ -4,16 +4,15 @@ import uuid
 from datetime import date
 from typing import Self
 
-from pydantic import Field, model_validator
+from pydantic import AliasChoices, Field, model_validator
 
 from app.core.categories import ExpenseCategory
-from app.core.constants import MAX_MONEY_AMOUNT
 from app.schemas.base import CamelModel
 
 
 class BudgetPayload(CamelModel):
     category: ExpenseCategory
-    limit: int = Field(gt=0, le=MAX_MONEY_AMOUNT)
+    limit: int = Field(gt=0)
     period_start: date
     period_end: date
 
@@ -28,13 +27,29 @@ class BudgetCreate(BudgetPayload):
     pass
 
 
-class BudgetUpdate(BudgetPayload):
-    pass
+class BudgetUpdate(CamelModel):
+    category: ExpenseCategory | None = None
+    limit: int | None = Field(default=None, gt=0)
+    period_start: date | None = None
+    period_end: date | None = None
+
+    @model_validator(mode="after")
+    def validate_period(self) -> Self:
+        if (
+            self.period_start is not None
+            and self.period_end is not None
+            and self.period_end < self.period_start
+        ):
+            raise ValueError("Tanggal selesai tidak boleh sebelum tanggal mulai")
+        return self
 
 
 class BudgetOut(CamelModel):
     id: uuid.UUID
     category: ExpenseCategory
-    limit: int
+    limit: int = Field(
+        validation_alias=AliasChoices("limit", "limit_amount"),
+        serialization_alias="limit",
+    )
     period_start: date
     period_end: date

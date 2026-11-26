@@ -53,7 +53,7 @@ export function BudgetForm({
         hint={
           isCategoryLocked
             ? 'Kategori tidak dapat diubah saat mengedit anggaran.'
-            : 'Kategori yang sudah memiliki anggaran tidak dapat dipilih lagi.'
+            : 'Kamu dapat membuat anggaran kategori yang sama untuk periode bulan/minggu berbeda.'
         }
         error={errors.category?.message}
         {...register('category')}

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from sqlalchemy import (
     BigInteger,
     CheckConstraint,
+    DateTime,
     ForeignKey,
     Index,
-    Integer,
     String,
     Text,
     Uuid,
@@ -18,7 +19,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 from app.models.base import TimestampMixin
-from app.models.telegram import TelegramAccount
 
 
 class User(TimestampMixin, Base):
@@ -27,6 +27,7 @@ class User(TimestampMixin, Base):
         CheckConstraint("length(trim(name)) BETWEEN 1 AND 120", name="users_name_check"),
         CheckConstraint("length(trim(email)) BETWEEN 3 AND 255", name="users_email_check"),
         CheckConstraint("length(password_hash) > 0", name="users_password_hash_check"),
+        Index("users_telegram_user_id_key", "telegram_user_id", unique=True),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
@@ -34,19 +35,15 @@ class User(TimestampMixin, Base):
     email: Mapped[str] = mapped_column(Text, nullable=False)
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    token_version: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        default=0,
-        server_default=text("0"),
+    telegram_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    telegram_chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    telegram_username: Mapped[str | None] = mapped_column(Text, nullable=True)
+    telegram_linked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
     )
 
     finance_settings: Mapped[FinanceSettings | None] = relationship(
-        back_populates="user",
-        uselist=False,
-        cascade="all, delete-orphan",
-    )
-    telegram_account: Mapped[TelegramAccount | None] = relationship(
         back_populates="user",
         uselist=False,
         cascade="all, delete-orphan",

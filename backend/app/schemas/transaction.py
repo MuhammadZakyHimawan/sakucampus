@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import datetime as dt
 import uuid
-from datetime import date
 from typing import Annotated, Self
 
 from pydantic import Field, StringConstraints, model_validator
@@ -13,7 +13,6 @@ from app.core.categories import (
     TransactionType,
     categories_for_type,
 )
-from app.core.constants import MAX_MONEY_AMOUNT
 from app.schemas.base import CamelModel
 
 Description = Annotated[
@@ -25,21 +24,23 @@ Note = Annotated[str, StringConstraints(strip_whitespace=True, max_length=1000)]
 
 class TransactionPayload(CamelModel):
     description: Description
-    amount: int = Field(gt=0, le=MAX_MONEY_AMOUNT)
+    amount: int = Field(gt=0)
     type: TransactionType
     category: ExpenseCategory | IncomeCategory
-    date: date
+    date: dt.date
     source: TransactionSource = "manual"
     note: Note | None = None
+    raw_text: str | None = None
+    nlp_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
 
     @model_validator(mode="after")
     def validate_payload(self) -> Self:
         if self.category not in categories_for_type(self.type):
             raise ValueError("Kategori tidak sesuai dengan jenis transaksi")
-        if self.source != "manual":
-            raise ValueError("Sumber transaksi harus manual")
         if self.note == "":
             self.note = None
+        if self.raw_text is not None and not self.raw_text.strip():
+            self.raw_text = None
         return self
 
 
@@ -47,8 +48,30 @@ class TransactionCreate(TransactionPayload):
     pass
 
 
-class TransactionUpdate(TransactionPayload):
-    pass
+class TransactionUpdate(CamelModel):
+    description: Description | None = None
+    amount: int | None = Field(default=None, gt=0)
+    type: TransactionType | None = None
+    category: ExpenseCategory | IncomeCategory | None = None
+    date: dt.date | None = None
+    source: TransactionSource | None = None
+    note: Note | None = None
+    raw_text: str | None = None
+    nlp_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def validate_payload(self) -> Self:
+        if (
+            self.type is not None
+            and self.category is not None
+            and self.category not in categories_for_type(self.type)
+        ):
+            raise ValueError("Kategori tidak sesuai dengan jenis transaksi")
+        if self.note == "":
+            self.note = None
+        if self.raw_text is not None and not self.raw_text.strip():
+            self.raw_text = None
+        return self
 
 
 class TransactionOut(CamelModel):
@@ -57,6 +80,8 @@ class TransactionOut(CamelModel):
     amount: int
     type: TransactionType
     category: ExpenseCategory | IncomeCategory
-    date: date
+    date: dt.date
     source: TransactionSource
     note: str | None = None
+    raw_text: str | None = None
+    nlp_confidence: float | None = None

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { CheckCircle2, PiggyBank, Plus, Target, Wallet } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -11,15 +11,9 @@ import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatCard } from '@/components/ui/StatCard';
 import { useToast } from '@/components/ui/toast-context';
-import { MOCK_API_ENABLED } from '@/lib/config';
+import { useFinanceData } from '@/hooks/finance-data-context';
+import { isMockApiEnabled } from '@/lib/config';
 import { NO_GOALS_MESSAGE } from '@/lib/constants';
-import {
-  addGoalContribution,
-  createGoal,
-  deleteGoal,
-  getGoals,
-  updateGoal,
-} from '@/services/goals.service';
 import type { Goal, GoalInput } from '@/types';
 import { isGoalAchieved } from '@/utils/calculations';
 import { formatCurrency } from '@/utils/currency';
@@ -28,17 +22,19 @@ import { GoalContributionForm } from './components/GoalContributionForm';
 import { GoalForm } from './components/GoalForm';
 import type { GoalFormValues } from './schemas';
 
-function sortGoals(goals: Goal[]): Goal[] {
-  return [...goals].sort((first, second) =>
-    first.deadline.localeCompare(second.deadline),
-  );
-}
-
 export function GoalsPage() {
   const { toast } = useToast();
-  const [goals, setGoals] = useState<Goal[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    goals,
+    isLoading,
+    error,
+    createGoal,
+    updateGoal,
+    addGoalContribution,
+    deleteGoal,
+  } = useFinanceData();
+  const isMock = isMockApiEnabled();
+
   const [formState, setFormState] = useState<{
     open: boolean;
     goal: Goal | null;
@@ -46,36 +42,6 @@ export function GoalsPage() {
   const [contributionGoal, setContributionGoal] = useState<Goal | null>(null);
   const [pendingDelete, setPendingDelete] = useState<Goal | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
-
-  useEffect(() => {
-    let isActive = true;
-
-    getGoals()
-      .then((data) => {
-        if (isActive) {
-          setGoals(data);
-          setError(null);
-        }
-      })
-      .catch((loadError: unknown) => {
-        if (isActive) {
-          setError(
-            loadError instanceof Error
-              ? loadError.message
-              : 'Target tabungan gagal dimuat.',
-          );
-        }
-      })
-      .finally(() => {
-        if (isActive) {
-          setIsLoading(false);
-        }
-      });
-
-    return () => {
-      isActive = false;
-    };
-  }, []);
 
   const totalTarget = goals.reduce((sum, goal) => sum + goal.targetAmount, 0);
   const totalSaved = goals.reduce((sum, goal) => sum + goal.savedAmount, 0);
@@ -103,12 +69,6 @@ export function GoalsPage() {
     try {
       if (formState.goal) {
         const updated = await updateGoal(formState.goal.id, input);
-
-        setGoals((current) =>
-          sortGoals(
-            current.map((goal) => (goal.id === updated.id ? updated : goal)),
-          ),
-        );
         toast({
           title: 'Target diperbarui',
           description: `Target "${updated.name}" telah disimpan.`,
@@ -116,8 +76,6 @@ export function GoalsPage() {
         });
       } else {
         const created = await createGoal(input);
-
-        setGoals((current) => sortGoals([...current, created]));
         toast({
           title: 'Target dibuat',
           description: `Target "${created.name}" berhasil ditambahkan.`,
@@ -145,12 +103,6 @@ export function GoalsPage() {
 
     try {
       const updated = await addGoalContribution(contributionGoal.id, amount);
-
-      setGoals((current) =>
-        sortGoals(
-          current.map((goal) => (goal.id === updated.id ? updated : goal)),
-        ),
-      );
       toast({
         title: 'Kontribusi ditambahkan',
         description: `${formatCurrency(amount)} masuk ke target "${updated.name}".`,
@@ -178,9 +130,6 @@ export function GoalsPage() {
 
     try {
       await deleteGoal(pendingDelete.id);
-      setGoals((current) =>
-        current.filter((goal) => goal.id !== pendingDelete.id),
-      );
       toast({
         title: 'Target dihapus',
         description: `Target "${pendingDelete.name}" telah dihapus.`,
@@ -208,9 +157,7 @@ export function GoalsPage() {
         description="Rencanakan tujuan keuangan dan pantau progres tabunganmu."
         actions={
           <>
-            <Badge variant={MOCK_API_ENABLED ? 'primary' : 'success'}>
-              {MOCK_API_ENABLED ? 'Data demo' : 'Tersinkron'}
-            </Badge>
+            {isMock ? <Badge variant="primary">Data demo</Badge> : null}
             <Button onClick={openCreateForm}>
               <Plus className="h-4 w-4" aria-hidden="true" />
               Tambah Target

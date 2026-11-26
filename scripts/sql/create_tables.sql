@@ -42,26 +42,12 @@ CREATE TABLE IF NOT EXISTS public.users (
   password_hash text NOT NULL
     CHECK (char_length(password_hash) > 0),
   avatar_url text NULL,
-  token_version integer NOT NULL DEFAULT 0,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_key
   ON public.users (lower(email));
-
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1
-    FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name = 'users'
-      AND column_name = 'token_version'
-  ) THEN
-    ALTER TABLE public.users ADD COLUMN token_version integer NOT NULL DEFAULT 0;
-  END IF;
-END $$;
 
 CREATE TABLE IF NOT EXISTS public.finance_settings (
   user_id uuid PRIMARY KEY
@@ -185,53 +171,8 @@ CREATE TABLE IF NOT EXISTS public.notifications (
   message text NOT NULL
     CHECK (char_length(btrim(message)) > 0),
   link text NULL,
-  rule_key text NULL,
-  CONSTRAINT notifications_user_rule_key_key UNIQUE (user_id, rule_key),
   is_read boolean NOT NULL DEFAULT false,
   created_at timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS public.telegram_accounts (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id uuid NOT NULL UNIQUE
-    REFERENCES public.users (id) ON DELETE CASCADE,
-  telegram_user_id bigint NOT NULL UNIQUE
-    CHECK (telegram_user_id > 0),
-  telegram_username text NULL,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS public.telegram_link_tokens (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id uuid NOT NULL
-    REFERENCES public.users (id) ON DELETE CASCADE,
-  token_hash text NOT NULL UNIQUE
-    CHECK (char_length(token_hash) = 64),
-  expires_at timestamptz NOT NULL,
-  used_at timestamptz NULL,
-  created_at timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS public.telegram_processed_updates (
-  update_id bigint PRIMARY KEY,
-  processed_at timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS public.security_events (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id uuid NULL
-    REFERENCES public.users (id) ON DELETE SET NULL,
-  event_type text NOT NULL
-    CHECK (char_length(btrim(event_type)) BETWEEN 1 AND 120),
-  outcome text NOT NULL DEFAULT 'failure'
-    CHECK (outcome IN ('success', 'failure')),
-  ip_address text NULL,
-  user_agent text NULL,
-  request_id text NULL,
-  details jsonb NULL,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS transactions_user_date_idx
@@ -258,18 +199,6 @@ CREATE INDEX IF NOT EXISTS notifications_user_created_idx
 CREATE INDEX IF NOT EXISTS notifications_user_unread_idx
   ON public.notifications (user_id)
   WHERE is_read = false;
-
-CREATE INDEX IF NOT EXISTS telegram_link_tokens_user_id_idx
-  ON public.telegram_link_tokens (user_id);
-
-CREATE INDEX IF NOT EXISTS security_events_user_id_idx
-  ON public.security_events (user_id);
-
-CREATE INDEX IF NOT EXISTS security_events_event_type_idx
-  ON public.security_events (event_type);
-
-CREATE INDEX IF NOT EXISTS security_events_created_at_idx
-  ON public.security_events (created_at);
 
 DROP TRIGGER IF EXISTS users_set_updated_at ON public.users;
 CREATE TRIGGER users_set_updated_at
@@ -298,18 +227,6 @@ CREATE TRIGGER budgets_set_updated_at
 DROP TRIGGER IF EXISTS goals_set_updated_at ON public.goals;
 CREATE TRIGGER goals_set_updated_at
   BEFORE UPDATE ON public.goals
-  FOR EACH ROW
-  EXECUTE FUNCTION public.set_updated_at();
-
-DROP TRIGGER IF EXISTS telegram_accounts_set_updated_at ON public.telegram_accounts;
-CREATE TRIGGER telegram_accounts_set_updated_at
-  BEFORE UPDATE ON public.telegram_accounts
-  FOR EACH ROW
-  EXECUTE FUNCTION public.set_updated_at();
-
-DROP TRIGGER IF EXISTS security_events_set_updated_at ON public.security_events;
-CREATE TRIGGER security_events_set_updated_at
-  BEFORE UPDATE ON public.security_events
   FOR EACH ROW
   EXECUTE FUNCTION public.set_updated_at();
 

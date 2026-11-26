@@ -2,15 +2,21 @@ import {
   BellRing,
   Check,
   PiggyBank,
+  Send,
   Target,
   Trash2,
   Wallet,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { cn } from '@/lib/cn';
-import type { AppNotification, NotificationType } from '@/types';
+import type {
+  AppNotification,
+  NotificationSeverity,
+  NotificationType,
+} from '@/types';
 import { formatDate } from '@/utils/date';
 
 const NOTIFICATION_VISUALS: Record<
@@ -35,6 +41,15 @@ const NOTIFICATION_VISUALS: Record<
   },
 };
 
+const SEVERITY_BADGE: Record<
+  NotificationSeverity,
+  { label: string; variant: 'neutral' | 'warning' | 'danger' }
+> = {
+  normal: { label: 'Normal', variant: 'neutral' },
+  warning: { label: 'Waspada', variant: 'warning' },
+  critical: { label: 'Kritis', variant: 'danger' },
+};
+
 export interface NotificationItemProps {
   notification: AppNotification;
   onOpen: (notification: AppNotification) => void;
@@ -50,6 +65,9 @@ export function NotificationItem({
 }: NotificationItemProps) {
   const visual = NOTIFICATION_VISUALS[notification.type];
   const Icon = visual.icon;
+  const severityMeta = notification.severity
+    ? SEVERITY_BADGE[notification.severity]
+    : null;
 
   return (
     <Card
@@ -75,13 +93,22 @@ export function NotificationItem({
               Baru
             </span>
           ) : null}
+          {severityMeta ? (
+            <Badge variant={severityMeta.variant}>{severityMeta.label}</Badge>
+          ) : null}
         </div>
         <p className="mt-1 text-sm leading-relaxed text-ink-secondary">
           {notification.message}
         </p>
-        <p className="mt-2 text-xs text-ink-secondary">
-          {formatDate(notification.date)}
-        </p>
+        <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-ink-secondary">
+          <span>{formatDate(notification.date)}</span>
+          {notification.sentToTelegram ? (
+            <span className="inline-flex items-center gap-1 text-info">
+              <Send className="h-3 w-3" aria-hidden="true" />
+              Terkirim ke Telegram
+            </span>
+          ) : null}
+        </div>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           {notification.link ? (
             <Button

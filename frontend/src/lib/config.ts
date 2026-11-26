@@ -7,12 +7,14 @@ export const BUDGET_WARNING_THRESHOLD = 75;
 export const BUDGET_EXCEEDED_THRESHOLD = 100;
 export const DEFAULT_PAGE_SIZE = 8;
 
-export const CSRF_COOKIE_NAME = 'sakucampus_csrf_token';
-export const CSRF_HEADER_NAME = 'X-CSRF-Token';
+export function isMockApiEnabled(): boolean {
+  return import.meta.env.VITE_USE_MOCK_API !== 'false';
+}
 
-export const MOCK_API_ENABLED = import.meta.env.VITE_USE_MOCK_API !== 'false';
+export const MOCK_API_ENABLED = isMockApiEnabled();
 
 export const STORAGE_KEYS = {
+  token: 'sakucampus.token.v1',
   auth: 'sakucampus.auth.v1',
   profile: 'sakucampus.profile.v1',
   data: 'sakucampus.data.v1',

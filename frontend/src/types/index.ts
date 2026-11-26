@@ -20,7 +20,11 @@ export type IncomeCategory =
 export type TransactionCategory = ExpenseCategory | IncomeCategory;
 export type BudgetStatus = 'safe' | 'warning' | 'exceeded';
 export type NotificationType = 'budget' | 'balance' | 'goal' | 'info';
+export type NotificationSeverity = 'normal' | 'warning' | 'critical';
+export type FinancialStatus = 'normal' | 'warning' | 'critical';
 export type PeriodPreset = '7d' | '30d' | 'month';
+export type ReportPeriodPreset = '7d' | '30d' | 'month' | 'all';
+export type TelegramMode = 'polling' | 'webhook' | 'disabled';
 
 export interface User {
   id: string;
@@ -29,13 +33,25 @@ export interface User {
   currency: string;
   initialBalance: number;
   minBalance: number;
-  avatarUrl?: string;
+  avatarUrl?: string | null;
+}
+
+export interface AuthSessionResponse {
+  accessToken: string;
+  tokenType: string;
+  expiresIn: number;
+  user: User;
 }
 
 export interface RegisterInput {
   name: string;
   email: string;
   password: string;
+}
+
+export interface ChangePasswordInput {
+  currentPassword: string;
+  newPassword: string;
 }
 
 export interface Transaction {
@@ -46,7 +62,9 @@ export interface Transaction {
   category: TransactionCategory;
   date: string;
   source: TransactionSource;
-  note?: string;
+  note?: string | null;
+  rawText?: string | null;
+  nlpConfidence?: number | null;
 }
 
 export interface TransactionInput {
@@ -91,11 +109,24 @@ export interface GoalInput {
 export interface AppNotification {
   id: string;
   type: NotificationType;
+  severity?: NotificationSeverity;
+  ruleCode?: string | null;
   title: string;
   message: string;
   date: string;
   read: boolean;
-  link?: string;
+  link?: string | null;
+  sentToTelegram?: boolean;
+}
+
+export interface RuleAlert {
+  ruleCode: string;
+  notificationType: NotificationType;
+  severity: NotificationSeverity;
+  title: string;
+  message: string;
+  dedupKey: string;
+  link: string;
 }
 
 export interface EducationArticle {
@@ -127,17 +158,20 @@ export interface FinancePreferences {
 export interface TelegramStatus {
   connected: boolean;
   username?: string;
-  linkedAt?: string;
-  botUsername?: string;
+  telegramUsername?: string | null;
+  telegramUserId?: string | null;
+  linkedAt?: string | null;
+  botUsername?: string | null;
+  botConfigured?: boolean;
+  mode?: TelegramMode;
   simulated?: boolean;
 }
 
-export interface TelegramLinkToken {
+export interface TelegramLinkTokenResponse {
   token: string;
-  deepLink?: string;
   expiresAt: string;
-  botUsername?: string;
-  simulated?: boolean;
+  deepLink?: string | null;
+  startCommand: string;
 }
 
 export interface PeriodRange {
@@ -158,6 +192,9 @@ export interface DashboardSummary {
   expense: number;
   net: number;
   burnRate: number;
+  runwayDays?: number | null;
+  safeDailySpend?: number;
+  financialStatus?: FinancialStatus;
 }
 
 export interface CashflowPoint {
@@ -192,7 +229,9 @@ export interface DashboardData {
   cashflow: CashflowPoint[];
   categories: CategoryTotal[];
   budgets: BudgetOverviewItem[];
+  goals?: Goal[];
   insights: FinancialInsight[];
+  ruleAlerts?: RuleAlert[];
   recentTransactions: Transaction[];
   transactionCount: number;
 }
@@ -215,9 +254,18 @@ export interface ReportComparison {
 export interface ReportData {
   range: PeriodRange;
   previousRange: PeriodRange;
+  balance?: number;
+  minBalance?: number;
+  dailyBurnRate?: number;
+  runwayDays?: number | null;
+  safeDailySpend?: number;
+  financialStatus?: FinancialStatus;
   summary: ReportSummary;
   comparison: ReportComparison;
   cashflow: CashflowPoint[];
   categories: CategoryTotal[];
+  budgets?: BudgetOverviewItem[];
+  goals?: Goal[];
+  ruleAlerts?: RuleAlert[];
   transactions: Transaction[];
 }

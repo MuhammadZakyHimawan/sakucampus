@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { MOCK_API_ENABLED } from '@/lib/config';
+import { isMockApiEnabled } from '@/lib/config';
+import {
+  getAccessToken,
+  setOnUnauthorizedHandler,
+} from '@/services/api-client';
 import {
   changePassword as changePasswordRequest,
-  getCurrentUser,
+  fetchCurrentUser,
   getStoredUser,
   login as loginRequest,
   logout as logoutRequest,
@@ -11,30 +15,62 @@ import {
   updateProfile as updateProfileRequest,
 } from '@/services/auth.service';
 import type { UserUpdate } from '@/services/auth.service';
-import type { RegisterInput, User } from '@/types';
+import type { ChangePasswordInput, RegisterInput, User } from '@/types';
 import { AuthContext } from './auth-context';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(() => getStoredUser());
+  const [isInitializing, setIsInitializing] = useState<boolean>(
+    () => !isMockApiEnabled() && Boolean(getAccessToken()),
+  );
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   useEffect(() => {
-    if (MOCK_API_ENABLED) {
-      return;
-    }
-
-    let active = true;
-
-    void getCurrentUser().then((restoredUser) => {
-      if (!active) {
-        return;
-      }
-
-      setUser(restoredUser);
+    setOnUnauthorizedHandler(() => {
+      setUser(null);
     });
 
     return () => {
-      active = false;
+      setOnUnauthorizedHandler(null);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isMockApiEnabled()) {
+      setIsInitializing(false);
+      return;
+    }
+
+    const token = getAccessToken();
+    if (!token) {
+      setUser(null);
+      setIsInitializing(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsInitializing(true);
+
+    fetchCurrentUser()
+      .then((freshUser) => {
+        if (!cancelled) {
+          setUser(freshUser);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          logoutRequest();
+          setUser(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsInitializing(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
     };
   }, []);
 
@@ -57,47 +93,55 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(() => {
-    void logoutRequest().catch(() => undefined);
+    logoutRequest();
     setUser(null);
   }, []);
 
   const updateProfile = useCallback(async (updates: UserUpdate) => {
     const updatedUser = await updateProfileRequest(updates);
     setUser(updatedUser);
-
     return updatedUser;
   }, []);
 
-  const changePassword = useCallback(
-    async (currentPassword: string, newPassword: string) => {
-      await changePasswordRequest(currentPassword, newPassword);
-    },
-    [],
-  );
+  const changePassword = useCallback(async (input: ChangePasswordInput) => {
+    await changePasswordRequest(input);
+  }, []);
+
+  const refreshUser = useCallback(async () => {
+    try {
+      const fresh = await fetchCurrentUser();
+      setUser(fresh);
+      return fresh;
+    } catch {
+      return null;
+    }
+  }, []);
 
   const value = useMemo(
     () => ({
       user,
       isAuthenticated: Boolean(user),
+      isInitializing,
       isLoggingIn,
       login,
       register,
       logout,
       updateProfile,
       changePassword,
+      refreshUser,
     }),
     [
       user,
+      isInitializing,
       isLoggingIn,
       login,
       register,
       logout,
       updateProfile,
       changePassword,
+      refreshUser,
     ],
   );
 
-  return (
-    <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

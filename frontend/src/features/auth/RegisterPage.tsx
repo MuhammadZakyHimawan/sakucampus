@@ -8,7 +8,7 @@ import { Checkbox } from '@/components/ui/Checkbox';
 import { Input } from '@/components/ui/Input';
 import { PasswordInput } from '@/components/ui/PasswordInput';
 import { useToast } from '@/components/ui/toast-context';
-import { MOCK_API_ENABLED } from '@/lib/config';
+import { isMockApiEnabled } from '@/lib/config';
 import { useAuth } from './auth-context';
 import { AuthCard } from './AuthCard';
 import { registerSchema } from './schemas';
@@ -18,6 +18,7 @@ export function RegisterPage() {
   const { isAuthenticated, register: registerAccount } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const isMock = isMockApiEnabled();
 
   const {
     register: registerField,
@@ -48,10 +49,8 @@ export function RegisterPage() {
         password: values.password,
       });
       toast({
-        title: MOCK_API_ENABLED
-          ? 'Akun demo berhasil dibuat'
-          : 'Pendaftaran berhasil',
-        description: `Selamat datang, ${values.name.trim()}.`,
+        title: 'Akun berhasil dibuat',
+        description: `Selamat datang di SakuCampus, ${values.name.trim()}.`,
         variant: 'success',
       });
       navigate('/dashboard', { replace: true });
@@ -72,11 +71,7 @@ export function RegisterPage() {
   return (
     <AuthCard
       title="Daftar akun"
-      description={
-        MOCK_API_ENABLED
-          ? 'Buat akun demo untuk mencoba seluruh fitur SakuCampus.'
-          : 'Buat akun SakuCampus untuk mulai mengelola keuanganmu.'
-      }
+      description="Buat akun SakuCampus untuk mulai mencatat dan memantau keuangan mahasiswa."
       footer={
         <>
           Sudah punya akun?{' '}
@@ -142,21 +137,15 @@ export function RegisterPage() {
           Daftar
         </Button>
 
-        <Alert variant={MOCK_API_ENABLED ? 'info' : 'success'}>
-          {MOCK_API_ENABLED
-            ? 'Pendaftaran ini simulasi. Akun hanya berlaku pada sesi ini dan password tidak disimpan.'
-            : 'Akunmu langsung aktif dan data keuangan akan tersimpan di server.'}
-        </Alert>
-
-        <p className="flex items-start gap-2 text-xs leading-relaxed text-ink-secondary">
-          <ShieldCheck
-            className="mt-0.5 h-4 w-4 shrink-0 text-primary"
-            aria-hidden="true"
-          />
-          {MOCK_API_ENABLED
-            ? 'Pendaftaran belum terhubung ke backend, email verifikasi, atau sistem keamanan production.'
-            : 'Password disimpan dalam bentuk hash. Email verifikasi belum tersedia pada versi ini.'}
-        </p>
+        {isMock ? (
+          <p className="flex items-start gap-2 text-xs leading-relaxed text-ink-secondary">
+            <ShieldCheck
+              className="mt-0.5 h-4 w-4 shrink-0 text-primary"
+              aria-hidden="true"
+            />
+            Simulasi — akun hanya disimpan pada browser lokal.
+          </p>
+        ) : null}
       </form>
     </AuthCard>
   );

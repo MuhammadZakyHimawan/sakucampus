@@ -1,5 +1,5 @@
-import { MOCK_API_ENABLED, STORAGE_KEYS } from '@/lib/config';
-import type { TelegramLinkToken, TelegramStatus } from '@/types';
+import { isMockApiEnabled, STORAGE_KEYS } from '@/lib/config';
+import type { TelegramLinkTokenResponse, TelegramStatus } from '@/types';
 import { toISODate } from '@/utils/date';
 import { apiRequest } from './api-client';
 import { readJson, writeJson } from './local-storage';
@@ -29,26 +29,54 @@ function isTelegramStatusLike(value: unknown): value is TelegramStatus {
     (candidate.username === undefined ||
       typeof candidate.username === 'string') &&
     (candidate.linkedAt === undefined ||
+      candidate.linkedAt === null ||
       typeof candidate.linkedAt === 'string') &&
     (candidate.simulated === undefined ||
       typeof candidate.simulated === 'boolean')
   );
 }
 
-export async function getTelegramStatus(): Promise<TelegramStatus> {
-  if (!MOCK_API_ENABLED) {
-    return apiRequest<TelegramStatus>('/telegram/status');
-  }
+function normalizeTelegramStatus(status: TelegramStatus): TelegramStatus {
+  const uname = status.telegramUsername ?? status.username ?? undefined;
+  return {
+    ...status,
+    username: uname ?? undefined,
+    telegramUsername: uname ?? null,
+    simulated: isMockApiEnabled(),
+  };
+}
 
+export function getTelegramStatus(): TelegramStatus {
   return readJson(STORAGE_KEYS.telegram, isTelegramStatusLike, () => ({
     ...DEFAULT_STATUS,
   }));
 }
 
-export async function createTelegramLinkToken(): Promise<TelegramLinkToken> {
-  return apiRequest<TelegramLinkToken>('/telegram/link-token', {
-    method: 'POST',
-  });
+export async function fetchTelegramStatus(): Promise<TelegramStatus> {
+  if (!isMockApiEnabled()) {
+    const raw = await apiRequest<TelegramStatus>('/telegram/status');
+    return normalizeTelegramStatus(raw);
+  }
+
+  return getTelegramStatus();
+}
+
+export async function createTelegramLinkToken(): Promise<TelegramLinkTokenResponse> {
+  if (!isMockApiEnabled()) {
+    return apiRequest<TelegramLinkTokenResponse>('/telegram/link-token', {
+      method: 'POST',
+    });
+  }
+
+  await wait(300);
+  const token = `demo-token-${Date.now().toString(36)}`;
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  return {
+    token,
+    expiresAt,
+    deepLink: null,
+    startCommand: `/start ${token}`,
+  };
 }
 
 export async function connectTelegram(
@@ -60,6 +88,7 @@ export async function connectTelegram(
   const status: TelegramStatus = {
     connected: true,
     username: `@${baseUsername.replace(/[^a-zA-Z0-9_]/g, '_')}`,
+    telegramUsername: `@${baseUsername.replace(/[^a-zA-Z0-9_]/g, '_')}`,
     linkedAt: toISODate(new Date()),
     simulated: true,
   };
@@ -70,10 +99,11 @@ export async function connectTelegram(
 }
 
 export async function disconnectTelegram(): Promise<TelegramStatus> {
-  if (!MOCK_API_ENABLED) {
-    return apiRequest<TelegramStatus>('/telegram/unlink', {
+  if (!isMockApiEnabled()) {
+    const raw = await apiRequest<TelegramStatus>('/telegram/unlink', {
       method: 'DELETE',
     });
+    return normalizeTelegramStatus(raw);
   }
 
   await wait(MOCK_DELAY);

@@ -1,4 +1,4 @@
-import { MOCK_API_ENABLED, STORAGE_KEYS } from '@/lib/config';
+import { isMockApiEnabled, STORAGE_KEYS } from '@/lib/config';
 import { mockNotifications } from '@/mocks/notifications';
 import type { AppNotification } from '@/types';
 import { apiRequest } from './api-client';
@@ -29,7 +29,9 @@ function isNotificationLike(value: unknown): value is AppNotification {
     typeof candidate.message === 'string' &&
     typeof candidate.date === 'string' &&
     typeof candidate.read === 'boolean' &&
-    (candidate.link === undefined || typeof candidate.link === 'string')
+    (candidate.link === undefined ||
+      candidate.link === null ||
+      typeof candidate.link === 'string')
   );
 }
 
@@ -61,20 +63,26 @@ function sortNotifications(
   );
 }
 
-export async function getNotifications(): Promise<AppNotification[]> {
-  if (!MOCK_API_ENABLED) {
-    return apiRequest<AppNotification[]>('/notifications');
+export async function getNotifications(
+  unreadOnly = false,
+): Promise<AppNotification[]> {
+  if (!isMockApiEnabled()) {
+    return apiRequest<AppNotification[]>('/notifications', {
+      params: unreadOnly ? { unread_only: true } : undefined,
+    });
   }
 
   await wait(MOCK_DELAY);
 
-  return sortNotifications(loadNotifications());
+  const items = sortNotifications(loadNotifications());
+
+  return unreadOnly ? items.filter((item) => !item.read) : items;
 }
 
 export async function markNotificationRead(
   id: string,
 ): Promise<AppNotification> {
-  if (!MOCK_API_ENABLED) {
+  if (!isMockApiEnabled()) {
     return apiRequest<AppNotification>(`/notifications/${id}/read`, {
       method: 'PATCH',
     });
@@ -104,11 +112,8 @@ export async function markNotificationRead(
 }
 
 export async function markAllNotificationsRead(): Promise<void> {
-  if (!MOCK_API_ENABLED) {
-    await apiRequest<{ updated: number }>('/notifications/read-all', {
-      method: 'PATCH',
-    });
-
+  if (!isMockApiEnabled()) {
+    await apiRequest<void>('/notifications/read-all', { method: 'POST' });
     return;
   }
 
@@ -123,7 +128,7 @@ export async function markAllNotificationsRead(): Promise<void> {
 }
 
 export async function deleteNotification(id: string): Promise<void> {
-  if (!MOCK_API_ENABLED) {
+  if (!isMockApiEnabled()) {
     await apiRequest<void>(`/notifications/${id}`, { method: 'DELETE' });
     return;
   }

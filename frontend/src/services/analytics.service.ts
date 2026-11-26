@@ -1,14 +1,20 @@
-import { MOCK_API_ENABLED } from '@/lib/config';
+import { isMockApiEnabled } from '@/lib/config';
 import type {
   Budget,
   BudgetOverviewItem,
+  CashflowPoint,
   CategoryTotal,
   DashboardData,
   DashboardSummary,
   FinancialInsight,
+  FinancialStatus,
+  Goal,
   PeriodPreset,
+  PeriodRange,
   ReportData,
+  ReportPeriodPreset,
   ReportSummary,
+  RuleAlert,
   Transaction,
   User,
 } from '@/types';
@@ -22,9 +28,13 @@ import {
   groupExpensesByCategory,
 } from '@/utils/calculations';
 import { formatCurrency } from '@/utils/currency';
-import { toISODate } from '@/utils/date';
-import { getPeriodRange, getPreviousPeriodRange, isWithinRange } from '@/utils/period';
-import { apiRequest } from './api-client';
+import {
+  getPeriodRange,
+  getPreviousPeriodRange,
+  isWithinRange,
+} from '@/utils/period';
+import { apiDownloadBlob, apiRequest } from './api-client';
+import type { DownloadedBlob } from './api-client';
 
 export interface DashboardDataInput {
   user: User;
@@ -40,6 +50,36 @@ interface InsightInput {
   previousTransactions: Transaction[];
   budgets: BudgetOverviewItem[];
   hasTransactions: boolean;
+}
+
+interface BackendDashboardResponse {
+  period: PeriodPreset;
+  range: PeriodRange;
+  summary: {
+    balance: number;
+    minBalance: number;
+    totalIncome: number;
+    totalExpense: number;
+    netCashFlow: number;
+    dailyBurnRate: number;
+    runwayDays: number | null;
+    safeDailySpend: number;
+    financialStatus: FinancialStatus;
+  };
+  cashflow: CashflowPoint[];
+  categories: CategoryTotal[];
+  budgets: BudgetOverviewItem[];
+  goals: Goal[];
+  insights: FinancialInsight[];
+  ruleAlerts: RuleAlert[];
+  recentTransactions: Transaction[];
+  transactionCount: number;
+}
+
+export interface ReportPdfQueryParams {
+  preset?: ReportPeriodPreset;
+  startDate?: string;
+  endDate?: string;
 }
 
 function buildBudgetOverview(
@@ -285,28 +325,111 @@ export function buildDashboardData({
   };
 }
 
-function analyticsQuery(input: { preset: PeriodPreset; reference?: Date }): string {
-  const params = new URLSearchParams({ preset: input.preset });
-  if (input.reference) {
-    params.set('reference', toISODate(input.reference));
-  }
-  return params.toString();
+export async function fetchDashboardSummary(
+  preset: PeriodPreset,
+  customRange?: { startDate?: string; endDate?: string },
+): Promise<DashboardData> {
+  const raw = await apiRequest<BackendDashboardResponse>('/analytics/summary', {
+    params: {
+      preset: customRange?.startDate ? undefined : preset,
+      start_date: customRange?.startDate,
+      end_date: customRange?.endDate,
+    },
+  });
+
+  return {
+    period: raw.period,
+    range: raw.range,
+    summary: {
+      balance: raw.summary.balance,
+      minBalance: raw.summary.minBalance,
+      income: raw.summary.totalIncome,
+      expense: raw.summary.totalExpense,
+      net: raw.summary.netCashFlow,
+      burnRate: raw.summary.dailyBurnRate,
+      runwayDays: raw.summary.runwayDays,
+      safeDailySpend: raw.summary.safeDailySpend,
+      financialStatus: raw.summary.financialStatus,
+    },
+    cashflow: raw.cashflow,
+    categories: raw.categories,
+    budgets: raw.budgets,
+    goals: raw.goals,
+    insights: raw.insights,
+    ruleAlerts: raw.ruleAlerts,
+    recentTransactions: raw.recentTransactions,
+    transactionCount: raw.transactionCount,
+  };
 }
 
-export function fetchDashboardData(input: DashboardDataInput): Promise<DashboardData> {
-  if (MOCK_API_ENABLED) {
-    return Promise.resolve(buildDashboardData(input));
-  }
-
-  return apiRequest<DashboardData>(
-    `/analytics/dashboard?${analyticsQuery(input)}`,
-  );
+export async function fetchReportAnalytics(
+  preset: PeriodPreset,
+  customRange?: { startDate?: string; endDate?: string },
+): Promise<ReportData> {
+  return apiRequest<ReportData>('/analytics/report', {
+    params: {
+      preset: customRange?.startDate ? undefined : preset,
+      start_date: customRange?.startDate,
+      end_date: customRange?.endDate,
+    },
+  });
 }
 
-export function fetchReportData(input: ReportDataInput): Promise<ReportData> {
-  if (MOCK_API_ENABLED) {
-    return Promise.resolve(buildReportData(input));
+export async function fetchReportPdf(
+  params: ReportPdfQueryParams,
+): Promise<DownloadedBlob> {
+  if (isMockApiEnabled()) {
+    throw new Error(
+      'Ekspor PDF memerlukan koneksi ke server backend FastAPI (mode live).',
+    );
   }
 
-  return apiRequest<ReportData>(`/analytics/report?${analyticsQuery(input)}`);
+  return apiDownloadBlob('/reports/pdf', {
+    preset: params.startDate && params.endDate ? undefined : (params.preset ?? '30d'),
+    start_date: params.startDate,
+    end_date: params.endDate,
+  });
+}
+
+export async function previewReportPdf(
+  params: ReportPdfQueryParams,
+): Promise<string> {
+  const { blob, filename } = await fetchReportPdf(params);
+  const blobUrl = URL.createObjectURL(blob);
+  const opened = window.open(blobUrl, '_blank', 'noopener,noreferrer');
+
+  if (!opened) {
+    // Fallback bila pop-up diblokir browser: unduh langsung
+    const anchor = document.createElement('a');
+    anchor.href = blobUrl;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+  }
+
+  window.setTimeout(() => {
+    URL.revokeObjectURL(blobUrl);
+  }, 60_000);
+
+  return filename;
+}
+
+export async function downloadReportPdf(
+  params: ReportPdfQueryParams,
+): Promise<string> {
+  const { blob, filename } = await fetchReportPdf(params);
+  const blobUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+
+  anchor.href = blobUrl;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  window.setTimeout(() => {
+    URL.revokeObjectURL(blobUrl);
+  }, 5_000);
+
+  return filename;
 }

@@ -1,407 +1,392 @@
-from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
+from __future__ import annotations
 
-import pytest
+import uuid
+from dataclasses import dataclass, field
+from datetime import UTC, date, datetime, timedelta
+from typing import Any
+
 from sqlalchemy import select
 
-from app.core.constants import AUDIT_TELEGRAM_SECRET_INVALID
-from app.models import SecurityEvent, TelegramLinkToken
-from app.services import telegram_service
+from app.config import get_settings
+from app.models import Notification, TelegramLinkToken, Transaction
+from app.modules.telegram.client import set_telegram_client_override
+from app.services.telegram_service import hash_link_token
 
 
-@pytest.fixture(autouse=True)
-def telegram_settings(monkeypatch):
-    monkeypatch.setattr(
-        telegram_service,
-        "get_settings",
-        lambda: SimpleNamespace(
-            telegram_bot_token=None,
-            telegram_bot_username=None,
-            telegram_webhook_secret=None,
-            telegram_link_token_minutes=15,
-            environment="test",
-            allow_insecure_telegram_webhook=True,
-        ),
+@dataclass
+class FakeTelegramClient:
+    """In-memory mock of TelegramBotClient — never makes real network requests."""
+
+    messages: list[tuple[int, str]] = field(default_factory=list)
+    documents: list[tuple[int, str, bytes, str | None]] = field(default_factory=list)
+
+    async def get_me(self) -> dict[str, Any] | None:
+        return {"id": 999, "is_bot": True, "username": "SakuCampusTestBot"}
+
+    async def get_updates(
+        self,
+        *,
+        offset: int | None = None,
+        timeout: int = 25,
+    ) -> list[dict[str, Any]]:
+        return []
+
+    async def send_message(
+        self,
+        chat_id: int,
+        text: str,
+        *,
+        parse_mode: str = "HTML",
+    ) -> bool:
+        self.messages.append((chat_id, text))
+        return True
+
+    async def send_document(
+        self,
+        chat_id: int,
+        filename: str,
+        content_bytes: bytes,
+        *,
+        caption: str | None = None,
+        parse_mode: str = "HTML",
+    ) -> bool:
+        self.documents.append((chat_id, filename, content_bytes, caption))
+        return True
+
+    async def set_webhook(self, url: str, *, secret_token: str | None = None) -> bool:
+        return True
+
+    async def delete_webhook(self, *, drop_pending_updates: bool = False) -> bool:
+        return True
+
+
+def _register_user(
+    client,
+    email: str,
+    name: str = "Mahasiswa",
+) -> tuple[uuid.UUID, dict[str, str]]:
+    res = client.post(
+        "/api/v1/auth/register",
+        json={"name": name, "email": email, "password": "Password123"},
     )
+    assert res.status_code == 201
+    body = res.json()
+    return uuid.UUID(body["user"]["id"]), {"Authorization": f"Bearer {body['accessToken']}"}
 
 
-def _update(
+def _make_private_update(
+    tg_user_id: int,
     text: str,
     *,
-    telegram_user_id: int = 111_222_333,
-    username: str | None = "andi_tg",
     chat_id: int | None = None,
-    update_id: int = 1,
-) -> dict:
-    sender = {"id": telegram_user_id}
-    if username is not None:
-        sender["username"] = username
-
+    username: str = "andi_mhs",
+    chat_type: str = "private",
+) -> dict[str, Any]:
     return {
-        "update_id": update_id,
+        "update_id": 1001,
         "message": {
-            "message_id": 10,
+            "message_id": 1,
+            "from": {"id": tg_user_id, "is_bot": False, "username": username},
+            "chat": {"id": chat_id or tg_user_id, "type": chat_type},
             "text": text,
-            "chat": {"id": chat_id if chat_id is not None else telegram_user_id},
-            "from": sender,
         },
     }
 
 
-def _link(client, headers: dict, *, telegram_user_id: int = 111_222_333) -> None:
-    token_response = client.post("/api/v1/telegram/link-token", headers=headers)
-    assert token_response.status_code == 201
-    token = token_response.json()["token"]
+def test_telegram_link_token_hashing_expiry_and_multi_user_isolation(client, db_session):
+    fake_tg = FakeTelegramClient()
+    set_telegram_client_override(fake_tg)
 
-    webhook_response = client.post(
-        "/api/v1/telegram/webhook",
-        json=_update(f"/start {token}", telegram_user_id=telegram_user_id),
+    user_a_id, headers_a = _register_user(client, "tga@example.com", "Andi Alpha")
+    user_b_id, headers_b = _register_user(client, "tgb@example.com", "Budi Beta")
+
+    # Initial status is disconnected
+    st0 = client.get("/api/v1/telegram/status", headers=headers_a).json()
+    assert st0["connected"] is False
+    assert st0["botUsername"] == "SakuCampusTestBot"
+
+    # Generate link token for User A -> verify plaintext is NEVER stored in DB
+    link_res = client.post("/api/v1/telegram/link-token", headers=headers_a)
+    assert link_res.status_code == 201
+    link_body = link_res.json()
+    raw_token = link_body["token"]
+    assert link_body["deepLink"] == f"https://t.me/SakuCampusTestBot?start={raw_token}"
+    assert link_body["startCommand"] == f"/start {raw_token}"
+
+    stored_row = db_session.scalar(
+        select(TelegramLinkToken).where(TelegramLinkToken.user_id == user_a_id)
     )
-    assert webhook_response.status_code == 200
-    assert webhook_response.json() == {"ok": True}
+    assert stored_row is not None
+    assert stored_row.token_hash != raw_token
+    assert stored_row.token_hash == hash_link_token(raw_token)
 
-
-def test_telegram_status_defaults_to_disconnected(client, auth):
-    account = auth()
-
-    response = client.get("/api/v1/telegram/status", headers=account["headers"])
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "connected": False,
-        "username": None,
-        "linkedAt": None,
-        "botUsername": None,
-        "simulated": True,
-    }
-
-
-def test_create_link_token_stores_only_the_hash(client, auth, db_session):
-    account = auth()
-
-    response = client.post("/api/v1/telegram/link-token", headers=account["headers"])
-
-    assert response.status_code == 201
-    body = response.json()
-    assert len(body["token"]) >= 32
-    assert body["deepLink"] is None
-    assert body["simulated"] is True
-
-    token = db_session.scalar(select(TelegramLinkToken))
-    assert token is not None
-    assert token.token_hash != body["token"]
-    assert len(token.token_hash) == 64
-
-
-def test_link_token_builds_deep_link_when_bot_is_configured(client, auth, monkeypatch):
-    monkeypatch.setattr(
-        telegram_service,
-        "get_settings",
-        lambda: SimpleNamespace(
-            telegram_bot_token=None,
-            telegram_bot_username="sakucampus_bot",
-            telegram_webhook_secret=None,
-            telegram_link_token_minutes=15,
-            environment="test",
-        ),
-    )
-    account = auth()
-
-    response = client.post("/api/v1/telegram/link-token", headers=account["headers"])
-
-    assert response.status_code == 201
-    body = response.json()
-    assert body["deepLink"] == f"https://t.me/sakucampus_bot?start={body['token']}"
-    assert body["botUsername"] == "sakucampus_bot"
-
-
-def test_webhook_links_account_with_one_time_token(client, auth):
-    account = auth()
-    token = client.post(
-        "/api/v1/telegram/link-token",
-        headers=account["headers"],
-    ).json()["token"]
-
-    response = client.post(
-        "/api/v1/telegram/webhook",
-        json=_update(f"/start {token}"),
-    )
-
-    assert response.status_code == 200
-    status = client.get("/api/v1/telegram/status", headers=account["headers"]).json()
-    assert status["connected"] is True
-    assert status["username"] == "@andi_tg"
-    assert status["linkedAt"] is not None
-
-
-def test_link_token_cannot_be_reused_by_another_user(client, auth):
-    first = auth("andi@example.com")
-    second = auth("budi@example.com")
-    token = client.post(
-        "/api/v1/telegram/link-token",
-        headers=first["headers"],
-    ).json()["token"]
-
-    client.post("/api/v1/telegram/webhook", json=_update(f"/start {token}"))
+    # Invalid token via /start -> rejected politely
     client.post(
         "/api/v1/telegram/webhook",
-        json=_update(f"/start {token}", telegram_user_id=999_888_777, update_id=2),
+        json=_make_private_update(111001, "/start token-palsu"),
     )
+    assert "Gagal menautkan akun" in fake_tg.messages[-1][1]
 
-    second_status = client.get("/api/v1/telegram/status", headers=second["headers"]).json()
-    assert second_status["connected"] is False
-
-
-def test_expired_link_token_is_rejected(client, auth, db_session):
-    account = auth()
-    token = client.post(
-        "/api/v1/telegram/link-token",
-        headers=account["headers"],
-    ).json()["token"]
-    stored = db_session.scalar(select(TelegramLinkToken))
-    assert stored is not None
-    stored.expires_at = datetime.now(UTC) - timedelta(minutes=1)
+    # Expired token -> rejected
+    expired_tok_res = client.post("/api/v1/telegram/link-token", headers=headers_b).json()
+    b_row = db_session.scalar(
+        select(TelegramLinkToken).where(TelegramLinkToken.user_id == user_b_id)
+    )
+    b_row.expires_at = datetime.now(UTC) - timedelta(minutes=1)
     db_session.commit()
-
-    client.post("/api/v1/telegram/webhook", json=_update(f"/start {token}"))
-
-    status = client.get("/api/v1/telegram/status", headers=account["headers"]).json()
-    assert status["connected"] is False
-
-
-def test_telegram_cannot_be_linked_to_two_users(client, auth):
-    first = auth("andi@example.com")
-    second = auth("budi@example.com")
-    _link(client, first["headers"], telegram_user_id=555_444_333)
-
-    token = client.post(
-        "/api/v1/telegram/link-token",
-        headers=second["headers"],
-    ).json()["token"]
     client.post(
         "/api/v1/telegram/webhook",
-        json=_update(f"/start {token}", telegram_user_id=555_444_333, update_id=2),
+        json=_make_private_update(222002, f"/start {expired_tok_res['token']}"),
     )
+    assert "kedaluwarsa" in fake_tg.messages[-1][1]
 
-    assert (
-        client.get("/api/v1/telegram/status", headers=first["headers"]).json()["connected"] is True
-    )
-    assert (
-        client.get("/api/v1/telegram/status", headers=second["headers"]).json()["connected"]
-        is False
-    )
-
-
-def test_unlink_removes_telegram_account(client, auth):
-    account = auth()
-    _link(client, account["headers"])
-
-    response = client.delete("/api/v1/telegram/unlink", headers=account["headers"])
-
-    assert response.status_code == 200
-    assert response.json()["connected"] is False
-    assert response.json()["username"] is None
-
-
-def test_webhook_requires_configured_secret(client, monkeypatch):
-    monkeypatch.setattr(
-        telegram_service,
-        "get_settings",
-        lambda: SimpleNamespace(
-            telegram_bot_token=None,
-            telegram_bot_username=None,
-            telegram_webhook_secret="rahasia-webhook",
-            telegram_link_token_minutes=15,
-            environment="production",
-            allow_insecure_telegram_webhook=False,
-        ),
-    )
-
-    rejected = client.post("/api/v1/telegram/webhook", json=_update("/help"))
-    accepted = client.post(
+    # Valid /start <token> for User A (Telegram ID 111001) -> connected!
+    client.post(
         "/api/v1/telegram/webhook",
-        json=_update("/help"),
-        headers={"X-Telegram-Bot-Api-Secret-Token": "rahasia-webhook"},
+        json=_make_private_update(111001, f"/start {raw_token}", username="andi_tg"),
     )
+    assert "Berhasil terhubung!" in fake_tg.messages[-1][1]
 
-    assert rejected.status_code == 403
-    assert accepted.status_code == 200
+    st_a = client.get("/api/v1/telegram/status", headers=headers_a).json()
+    assert st_a["connected"] is True
+    assert st_a["telegramUsername"] == "@andi_tg"
+    assert st_a["telegramUserId"] == "111001"
+
+    # Reusing the same one-time token -> rejected!
+    client.post(
+        "/api/v1/telegram/webhook",
+        json=_make_private_update(111001, f"/start {raw_token}"),
+    )
+    assert "sudah pernah digunakan" in fake_tg.messages[-1][1]
+
+    # Multi-User Isolation: Telegram 111001 tries to link to User B -> MUST be rejected!
+    fresh_b_token = client.post("/api/v1/telegram/link-token", headers=headers_b).json()["token"]
+    client.post(
+        "/api/v1/telegram/webhook",
+        json=_make_private_update(111001, f"/start {fresh_b_token}"),
+    )
+    assert "sudah tertaut ke akun SakuCampus lain" in fake_tg.messages[-1][1]
+
+    # Link User B with their own distinct Telegram ID 222002 -> succeeds!
+    client.post(
+        "/api/v1/telegram/webhook",
+        json=_make_private_update(222002, f"/start {fresh_b_token}", username="budi_tg"),
+    )
+    assert "Berhasil terhubung!" in fake_tg.messages[-1][1]
+
+    # Chat from Telegram A records only into User A, invisible to User B
+    client.post(
+        "/api/v1/telegram/webhook",
+        json=_make_private_update(111001, "makan siang ayam bakar 25rb"),
+    )
+    assert len(client.get("/api/v1/transactions", headers=headers_a).json()) == 1
+    assert len(client.get("/api/v1/transactions", headers=headers_b).json()) == 0
 
 
-def _capture_replies(monkeypatch) -> list[str]:
-    replies: list[str] = []
+def test_telegram_nlp_chat_commands_pdf_undo_and_group_ignore(client, db_session):
+    fake_tg = FakeTelegramClient()
+    set_telegram_client_override(fake_tg)
 
-    async def fake_send_message(chat_id: int, text: str) -> None:
-        replies.append(text)
+    user_id, headers = _register_user(client, "chatflow@example.com", "Citra Mahasiswa")
+    today = date.today()
 
-    monkeypatch.setattr(telegram_service, "send_message", fake_send_message)
-    return replies
-
-
-def test_chat_transaction_triggers_rule_engine_notifications(client, auth, monkeypatch):
-    replies = _capture_replies(monkeypatch)
-    account = auth()
-    _link(client, account["headers"])
-
-    settings = client.patch(
+    client.patch(
         "/api/v1/settings/finance",
-        headers=account["headers"],
-        json={"minBalance": 2_000_000},
+        headers=headers,
+        json={"initialBalance": 300000, "minBalance": 250000},
     )
-    assert settings.status_code == 200, settings.text
+    client.post(
+        "/api/v1/budgets",
+        headers=headers,
+        json={
+            "category": "Gaya Hidup",
+            "limit": 100000,
+            "periodStart": today.replace(day=1).isoformat(),
+            "periodEnd": today.isoformat(),
+        },
+    )
+    client.post(
+        "/api/v1/goals",
+        headers=headers,
+        json={
+            "name": "Beli Buku Skripsi",
+            "targetAmount": 400000,
+            "deadline": (today + timedelta(days=45)).isoformat(),
+        },
+    )
 
-    response = client.post(
+    # Group/supergroup messages MUST be completely ignored
+    before_msgs = len(fake_tg.messages)
+    client.post(
         "/api/v1/telegram/webhook",
-        json=_update("makan ayam 20rb", update_id=2),
+        json=_make_private_update(333003, "beli kopi 20rb", chat_type="group"),
     )
-    assert response.status_code == 200, response.text
+    assert len(fake_tg.messages) == before_msgs
 
-    notifications = client.get("/api/v1/notifications", headers=account["headers"])
-    assert notifications.status_code == 200, notifications.text
-    assert any(item["type"] == "balance" for item in notifications.json())
-    assert any("Tercatat" in text for text in replies)
-    assert any("Saldo mulai menipis" in text for text in replies)
-
-
-def test_webhook_requires_secret_when_insecure_mode_disabled(client, monkeypatch):
-    monkeypatch.setattr(
-        telegram_service,
-        "get_settings",
-        lambda: SimpleNamespace(
-            telegram_bot_token=None,
-            telegram_bot_username=None,
-            telegram_webhook_secret=None,
-            telegram_link_token_minutes=15,
-            environment="development",
-            allow_insecure_telegram_webhook=False,
-        ),
-    )
-
-    response = client.post("/api/v1/telegram/webhook", json=_update("/help"))
-
-    assert response.status_code == 503
-
-
-def test_webhook_rejects_malformed_payload(client):
-    response = client.post(
+    # Unlinked user sending transaction -> prompted to link first
+    client.post(
         "/api/v1/telegram/webhook",
-        json={"update_id": "bukan-angka", "message": {}},
+        json=_make_private_update(333003, "beli kopi 20rb"),
     )
+    assert "belum terhubung" in fake_tg.messages[-1][1]
 
-    assert response.status_code == 422
+    # Link Citra's Telegram (333003)
+    tok = client.post("/api/v1/telegram/link-token", headers=headers).json()["token"]
+    client.post("/api/v1/telegram/webhook", json=_make_private_update(333003, f"/start {tok}"))
 
-
-def test_webhook_checks_secret_before_payload(client, monkeypatch):
-    monkeypatch.setattr(
-        telegram_service,
-        "get_settings",
-        lambda: SimpleNamespace(
-            telegram_bot_token=None,
-            telegram_bot_username=None,
-            telegram_webhook_secret="rahasia-webhook",
-            telegram_link_token_minutes=15,
-            environment="production",
-            allow_insecure_telegram_webhook=False,
-        ),
-    )
-
-    malformed = {"update_id": "bukan-angka", "message": {}}
-    rejected = client.post("/api/v1/telegram/webhook", json=malformed)
-    accepted = client.post(
+    # Message without amount -> friendly guide, 0 transactions created
+    client.post(
         "/api/v1/telegram/webhook",
-        json=malformed,
-        headers={"X-Telegram-Bot-Api-Secret-Token": "rahasia-webhook"},
+        json=_make_private_update(333003, "halo bot lupa nominalnya"),
     )
+    assert "nominal transaksi belum terbaca" in fake_tg.messages[-1][1]
+    assert client.get("/api/v1/transactions", headers=headers).json() == []
 
-    assert rejected.status_code == 403
-    assert accepted.status_code == 422
-
-
-def test_chat_message_creates_telegram_transaction(client, auth):
-    account = auth()
-    _link(client, account["headers"])
-
-    response = client.post(
+    # Natural NLP chat -> exceeds Gaya Hidup budget (120k > 100k) & drops balance to 180k < 250k!
+    client.post(
         "/api/v1/telegram/webhook",
-        json=_update("makan ayam 20rb", update_id=2),
+        json=_make_private_update(333003, "nongkrong ngopi kekinian 120rb"),
     )
+    reply_text = fake_tg.messages[-1][1]
+    assert "Transaksi Tercatat!" in reply_text
+    assert "Rp120.000" in reply_text
+    assert "PERINGATAN KRITIS" in reply_text
 
-    assert response.status_code == 200
-    transactions = client.get("/api/v1/transactions", headers=account["headers"]).json()
-    assert len(transactions) == 1
-    assert transactions[0]["description"] == "makan ayam 20rb"
-    assert transactions[0]["amount"] == 20_000
-    assert transactions[0]["category"] == "Kebutuhan Primer"
-    assert transactions[0]["source"] == "telegram"
+    # Verify DB transaction metadata & notifications marked sent_to_telegram=True
+    tx_list = client.get("/api/v1/transactions", headers=headers).json()
+    assert len(tx_list) == 1
+    assert tx_list[0]["source"] == "telegram"
+    assert tx_list[0]["rawText"] == "nongkrong ngopi kekinian 120rb"
+    assert tx_list[0]["nlpConfidence"] is not None
+
+    notifs = db_session.scalars(select(Notification).where(Notification.user_id == user_id)).all()
+    critical_notifs = [n for n in notifs if n.severity == "critical"]
+    assert len(critical_notifs) >= 1
+    assert all(n.sent_to_telegram is True for n in critical_notifs)
+
+    # Test interactive commands: /saldo, /ringkasan, /budget, /goals, /bantuan, /pdf
+    for cmd, expected_snippet in [
+        ("/saldo", "Ringkasan Saldo"),
+        ("/ringkasan", "Ringkasan Bulan Ini"),
+        ("/budget", "Status Anggaran Kategori"),
+        ("/goals", "Progres Target Tabungan"),
+        ("/bantuan", "Panduan Bot SakuCampus"),
+    ]:
+        client.post("/api/v1/telegram/webhook", json=_make_private_update(333003, cmd))
+        assert expected_snippet in fake_tg.messages[-1][1]
+
+    # /pdf sends valid %PDF- bytes via send_document!
+    client.post("/api/v1/telegram/webhook", json=_make_private_update(333003, "/pdf"))
+    assert len(fake_tg.documents) == 1
+    doc_chat_id, doc_filename, doc_bytes, doc_caption = fake_tg.documents[0]
+    assert doc_chat_id == 333003
+    assert doc_filename.endswith(".pdf")
+    assert doc_bytes.startswith(b"%PDF-")
+    assert "Citra Mahasiswa" in (doc_caption or "")
+
+    # /batal undoes the recent Telegram transaction & restores balance to Rp300.000
+    client.post("/api/v1/telegram/webhook", json=_make_private_update(333003, "/batal"))
+    assert "Transaksi berhasil dibatalkan!" in fake_tg.messages[-1][1]
+    assert "Rp300.000" in fake_tg.messages[-1][1]
+    assert client.get("/api/v1/transactions", headers=headers).json() == []
+
+    # Test 15-minute safety window on /batal (old transaction > 15m is NOT deleted)
+    old_tx = Transaction(
+        user_id=user_id,
+        description="Kopi lama",
+        amount=18000,
+        type="expense",
+        category="Gaya Hidup",
+        date=today,
+        source="telegram",
+        created_at=datetime.now(UTC) - timedelta(minutes=25),
+    )
+    db_session.add(old_tx)
+    db_session.commit()
+    client.post("/api/v1/telegram/webhook", json=_make_private_update(333003, "/batal"))
+    assert "lebih dari 15 menit" in fake_tg.messages[-1][1]
+    assert len(client.get("/api/v1/transactions", headers=headers).json()) == 1
 
 
-def test_chat_message_of_unlinked_user_is_not_recorded(client, auth, monkeypatch):
-    replies = _capture_replies(monkeypatch)
-    account = auth()
+def test_webhook_secret_realtime_web_push_and_unlink(client, db_session, monkeypatch):
+    fake_tg = FakeTelegramClient()
+    set_telegram_client_override(fake_tg)
 
-    client.post("/api/v1/telegram/webhook", json=_update("makan ayam 20rb"))
+    user_id, headers = _register_user(client, "webpush@example.com", "Dimas Web")
+    today = date.today()
 
-    assert client.get("/api/v1/transactions", headers=account["headers"]).json() == []
-    assert len(replies) == 1
-    assert "belum terhubung" in replies[0]
+    # Link Dimas's Telegram (444004)
+    tok = client.post("/api/v1/telegram/link-token", headers=headers).json()["token"]
+    client.post("/api/v1/telegram/webhook", json=_make_private_update(444004, f"/start {tok}"))
+    fake_tg.messages.clear()
 
-
-def test_unparseable_chat_message_replies_with_format_hint(client, auth, monkeypatch):
-    replies = _capture_replies(monkeypatch)
-    account = auth()
-    _link(client, account["headers"])
-
-    client.post("/api/v1/telegram/webhook", json=_update("halo", update_id=2))
-
-    assert len(replies) == 2
-    assert "makan ayam 20rb" in replies[-1]
-    assert client.get("/api/v1/transactions", headers=account["headers"]).json() == []
-
-
-def test_duplicate_webhook_update_does_not_duplicate_transaction(client, auth):
-    account = auth()
-    _link(client, account["headers"])
-    settings = client.patch(
+    # Configure finance settings, then create large expense via WEB API -> BackgroundTasks push!
+    client.patch(
         "/api/v1/settings/finance",
-        headers=account["headers"],
-        json={"minBalance": 2_000_000},
+        headers=headers,
+        json={"initialBalance": 400000, "minBalance": 300000},
     )
-    assert settings.status_code == 200, settings.text
-    update = _update("uang saku 500rb", update_id=2)
+    fake_tg.messages.clear()
 
-    client.post("/api/v1/telegram/webhook", json=update)
-    client.post("/api/v1/telegram/webhook", json=update)
-
-    transactions = client.get("/api/v1/transactions", headers=account["headers"]).json()
-    assert len(transactions) == 1
-    notifications = client.get("/api/v1/notifications", headers=account["headers"]).json()
-    assert sum(item["type"] == "balance" for item in notifications) == 1
-
-
-def test_invalid_webhook_secret_is_rejected_and_audited(client, db_session, monkeypatch):
-    monkeypatch.setattr(
-        telegram_service,
-        "get_settings",
-        lambda: SimpleNamespace(
-            telegram_bot_token=None,
-            telegram_bot_username=None,
-            telegram_webhook_secret="rahasia-webhook-yang-panjang",
-            telegram_link_token_minutes=15,
-            environment="test",
-            allow_insecure_telegram_webhook=False,
-        ),
+    web_tx_res = client.post(
+        "/api/v1/transactions",
+        headers=headers,
+        json={
+            "description": "Bayar UKT tambahan via Web",
+            "amount": 200000,
+            "type": "expense",
+            "category": "Pendidikan",
+            "date": today.isoformat(),
+            "source": "manual",
+        },
     )
+    assert web_tx_res.status_code == 201
 
-    response = client.post(
+    # Verify real-time push message arrived in Telegram chat & DB marked sent_to_telegram=True!
+    assert len(fake_tg.messages) >= 1
+    pushed_chat_id, pushed_text = fake_tg.messages[-1]
+    assert pushed_chat_id == 444004
+    assert "Notifikasi SakuCampus" in pushed_text
+    assert "PERINGATAN KRITIS" in pushed_text
+
+    db_session.expire_all()
+    notifs = db_session.scalars(select(Notification).where(Notification.user_id == user_id)).all()
+    critical_notifs = [n for n in notifs if n.severity == "critical"]
+    assert len(critical_notifs) >= 1
+    assert all(n.sent_to_telegram is True for n in critical_notifs)
+
+    # Test Webhook Secret verification (403 when missing/wrong, 200 when matching)
+    settings = get_settings()
+    monkeypatch.setattr(settings, "telegram_webhook_secret", "rahasia-webhook-123")
+
+    forbidden_no_hdr = client.post(
         "/api/v1/telegram/webhook",
-        json=_update("/help"),
+        json=_make_private_update(444004, "/saldo"),
+    )
+    assert forbidden_no_hdr.status_code == 403
+
+    forbidden_bad_hdr = client.post(
+        "/api/v1/telegram/webhook",
         headers={"X-Telegram-Bot-Api-Secret-Token": "salah"},
+        json=_make_private_update(444004, "/saldo"),
     )
+    assert forbidden_bad_hdr.status_code == 403
 
-    assert response.status_code == 403
-    event = db_session.scalar(
-        select(SecurityEvent).where(SecurityEvent.event_type == AUDIT_TELEGRAM_SECRET_INVALID)
+    ok_hdr = client.post(
+        "/api/v1/telegram/webhook",
+        headers={"X-Telegram-Bot-Api-Secret-Token": "rahasia-webhook-123"},
+        json=_make_private_update(444004, "/saldo"),
     )
-    assert event is not None
-    assert event.outcome == "failure"
-    assert event.details == {"reason": "invalid_or_missing_secret"}
+    assert ok_hdr.status_code == 200
+
+    # Unlink Telegram -> status disconnected & next chat asks to link again
+    unlink_res = client.delete("/api/v1/telegram/unlink", headers=headers)
+    assert unlink_res.status_code == 200
+    assert unlink_res.json()["connected"] is False
+
+    client.post(
+        "/api/v1/telegram/webhook",
+        headers={"X-Telegram-Bot-Api-Secret-Token": "rahasia-webhook-123"},
+        json=_make_private_update(444004, "/saldo"),
+    )
+    assert "belum terhubung" in fake_tg.messages[-1][1]

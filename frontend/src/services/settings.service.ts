@@ -1,7 +1,9 @@
-import { DEFAULT_CURRENCY, MOCK_API_ENABLED, STORAGE_KEYS } from '@/lib/config';
+import { DEFAULT_CURRENCY, isMockApiEnabled, STORAGE_KEYS } from '@/lib/config';
 import { DEFAULT_DASHBOARD_PERIOD } from '@/lib/constants';
-import type { FinancePreferences, FinanceSettings, User } from '@/types';
+import { DEMO_USER } from '@/mocks/users';
+import type { FinancePreferences, FinanceSettings } from '@/types';
 import { apiRequest } from './api-client';
+import { getStoredUser, updateStoredUser } from './auth.service';
 import { readJson, writeJson } from './local-storage';
 
 export const DEFAULT_FINANCE_PREFERENCES: FinancePreferences = {
@@ -10,20 +12,6 @@ export const DEFAULT_FINANCE_PREFERENCES: FinancePreferences = {
   notifyBalance: true,
   notifyGoal: true,
 };
-
-export type FinanceSettingsUpdate = Partial<
-  Pick<
-    FinanceSettings,
-    | 'initialBalance'
-    | 'minBalance'
-    | 'period'
-    | 'notifyBudget'
-    | 'notifyBalance'
-    | 'notifyGoal'
-  >
->;
-
-let cachedSettings: FinanceSettings | null = null;
 
 function isFinancePreferences(value: unknown): value is FinancePreferences {
   if (typeof value !== 'object' || value === null) {
@@ -42,20 +30,6 @@ function isFinancePreferences(value: unknown): value is FinancePreferences {
   );
 }
 
-function pickPreferences(settings: FinanceSettings): FinancePreferences {
-  return {
-    period: settings.period,
-    notifyBudget: settings.notifyBudget,
-    notifyBalance: settings.notifyBalance,
-    notifyGoal: settings.notifyGoal,
-  };
-}
-
-function rememberSettings(settings: FinanceSettings): void {
-  cachedSettings = settings;
-  saveFinancePreferences(pickPreferences(settings));
-}
-
 export function getFinancePreferences(): FinancePreferences {
   return readJson(
     STORAGE_KEYS.preferences,
@@ -68,69 +42,70 @@ export function saveFinancePreferences(
   preferences: FinancePreferences,
 ): void {
   writeJson(STORAGE_KEYS.preferences, preferences);
-
-  if (cachedSettings) {
-    cachedSettings = {
-      ...cachedSettings,
-      ...preferences,
-    };
-  }
 }
 
-export function createFinanceSettings(user: User): FinanceSettings {
+export async function fetchFinanceSettings(): Promise<FinanceSettings> {
+  if (!isMockApiEnabled()) {
+    const settings = await apiRequest<FinanceSettings>('/settings/finance');
+    saveFinancePreferences({
+      period: settings.period,
+      notifyBudget: settings.notifyBudget,
+      notifyBalance: settings.notifyBalance,
+      notifyGoal: settings.notifyGoal,
+    });
+    return settings;
+  }
+
+  const activeUser = getStoredUser() ?? DEMO_USER;
+  const preferences = getFinancePreferences();
+
   return {
-    ...getFinancePreferences(),
-    currency: user.currency || DEFAULT_CURRENCY,
-    initialBalance: user.initialBalance,
-    minBalance: user.minBalance,
+    initialBalance: activeUser.initialBalance,
+    minBalance: activeUser.minBalance,
+    currency: activeUser.currency || DEFAULT_CURRENCY,
+    period: preferences.period,
+    notifyBudget: preferences.notifyBudget,
+    notifyBalance: preferences.notifyBalance,
+    notifyGoal: preferences.notifyGoal,
   };
 }
 
-export async function getFinanceSettings(
-  fallback: FinanceSettings,
-): Promise<FinanceSettings> {
-  if (!MOCK_API_ENABLED) {
-    const settings = await apiRequest<FinanceSettings>('/settings/finance');
-
-    rememberSettings(settings);
-    return settings;
-  }
-
-  cachedSettings = fallback;
-  return fallback;
-}
-
 export async function updateFinanceSettings(
-  input: FinanceSettingsUpdate,
+  input: Partial<FinanceSettings>,
 ): Promise<FinanceSettings> {
-  if (!MOCK_API_ENABLED) {
-    const settings = await apiRequest<FinanceSettings>('/settings/finance', {
+  if (!isMockApiEnabled()) {
+    const updated = await apiRequest<FinanceSettings>('/settings/finance', {
       method: 'PATCH',
       body: input,
     });
-
-    rememberSettings(settings);
-    return settings;
+    saveFinancePreferences({
+      period: updated.period,
+      notifyBudget: updated.notifyBudget,
+      notifyBalance: updated.notifyBalance,
+      notifyGoal: updated.notifyGoal,
+    });
+    return updated;
   }
 
-  const current =
-    cachedSettings ??
-    ({
-      ...DEFAULT_FINANCE_PREFERENCES,
-      currency: DEFAULT_CURRENCY,
-      initialBalance: 0,
-      minBalance: 0,
-    } satisfies FinanceSettings);
-  const next: FinanceSettings = { ...current, ...input };
+  const currentPrefs = getFinancePreferences();
+  const nextPrefs: FinancePreferences = {
+    period: input.period ?? currentPrefs.period,
+    notifyBudget: input.notifyBudget ?? currentPrefs.notifyBudget,
+    notifyBalance: input.notifyBalance ?? currentPrefs.notifyBalance,
+    notifyGoal: input.notifyGoal ?? currentPrefs.notifyGoal,
+  };
+  saveFinancePreferences(nextPrefs);
 
-  rememberSettings(next);
-  return next;
-}
+  const updatedUser = updateStoredUser({
+    initialBalance: input.initialBalance,
+    minBalance: input.minBalance,
+    currency: input.currency ?? DEFAULT_CURRENCY,
+  });
 
-export async function updateFinancePreferences(
-  preferences: FinancePreferences,
-): Promise<FinancePreferences> {
-  const settings = await updateFinanceSettings(preferences);
-
-  return pickPreferences(settings);
+  return {
+    initialBalance: updatedUser.initialBalance,
+    minBalance: updatedUser.minBalance,
+    currency: updatedUser.currency,
+    ...nextPrefs,
+  };
 }

@@ -137,6 +137,11 @@ export function TransactionTable({
                   <p className="truncate font-medium text-ink">
                     {transaction.description}
                   </p>
+                  {transaction.rawText ? (
+                    <p className="truncate text-[11px] text-ink-secondary">
+                      Chat: &ldquo;{transaction.rawText}&rdquo;
+                    </p>
+                  ) : null}
                 </td>
                 <td className="whitespace-nowrap px-5 py-3 text-ink-secondary">
                   {formatDate(transaction.date)}

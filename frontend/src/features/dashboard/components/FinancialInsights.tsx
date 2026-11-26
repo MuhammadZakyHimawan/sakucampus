@@ -12,8 +12,8 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/Card';
-import { MOCK_API_ENABLED } from '@/lib/config';
 import { cn } from '@/lib/cn';
+import { isMockApiEnabled } from '@/lib/config';
 import { NO_INSIGHTS_MESSAGE } from '@/lib/constants';
 import type { FinancialInsight, InsightTone } from '@/types';
 
@@ -52,15 +52,17 @@ export function FinancialInsights({
   insights,
   className,
 }: FinancialInsightsProps) {
+  const isMock = isMockApiEnabled();
+
   return (
     <Card className={cn('flex h-full flex-col', className)}>
       <CardHeader>
         <div>
-          <CardTitle>Financial Insight</CardTitle>
+          <CardTitle>Insight & Rekomendasi</CardTitle>
           <CardDescription>
-            {MOCK_API_ENABLED
-              ? 'Dihitung dari data contoh di browser.'
-              : 'Dihitung dari data transaksi dan anggaranmu.'}
+            {isMock
+              ? 'Dihitung otomatis dari mock data demo.'
+              : 'Evaluasi proaktif atas arus kas, anggaran, dan ketahanan saldomu.'}
           </CardDescription>
         </div>
       </CardHeader>

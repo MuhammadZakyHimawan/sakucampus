@@ -1,4 +1,4 @@
-import { MOCK_API_ENABLED, STORAGE_KEYS } from '@/lib/config';
+import { isMockApiEnabled, STORAGE_KEYS } from '@/lib/config';
 import { mockGoals } from '@/mocks/goals';
 import type { Goal, GoalInput } from '@/types';
 import { apiRequest } from './api-client';
@@ -51,7 +51,9 @@ function validateGoalInput(input: GoalInput): void {
   }
 
   if (!Number.isInteger(input.targetAmount) || input.targetAmount <= 0) {
-    throw new Error('Nominal target harus berupa angka bulat lebih besar dari nol.');
+    throw new Error(
+      'Nominal target harus berupa angka bulat lebih besar dari nol.',
+    );
   }
 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.deadline)) {
@@ -60,7 +62,7 @@ function validateGoalInput(input: GoalInput): void {
 }
 
 export async function getGoals(): Promise<Goal[]> {
-  if (!MOCK_API_ENABLED) {
+  if (!isMockApiEnabled()) {
     return apiRequest<Goal[]>('/goals');
   }
 
@@ -72,15 +74,20 @@ export async function getGoals(): Promise<Goal[]> {
 }
 
 export async function createGoal(input: GoalInput): Promise<Goal> {
-  if (!MOCK_API_ENABLED) {
+  validateGoalInput(input);
+
+  if (!isMockApiEnabled()) {
     return apiRequest<Goal>('/goals', {
       method: 'POST',
-      body: input,
+      body: {
+        name: input.name.trim(),
+        targetAmount: input.targetAmount,
+        deadline: input.deadline,
+      },
     });
   }
 
   await wait(MOCK_DELAY);
-  validateGoalInput(input);
 
   const goal: Goal = {
     id: createId('goal'),
@@ -100,15 +107,20 @@ export async function updateGoal(
   id: string,
   input: GoalInput,
 ): Promise<Goal> {
-  if (!MOCK_API_ENABLED) {
+  validateGoalInput(input);
+
+  if (!isMockApiEnabled()) {
     return apiRequest<Goal>(`/goals/${id}`, {
       method: 'PATCH',
-      body: input,
+      body: {
+        name: input.name.trim(),
+        targetAmount: input.targetAmount,
+        deadline: input.deadline,
+      },
     });
   }
 
   await wait(MOCK_DELAY);
-  validateGoalInput(input);
 
   const goals = loadGoals();
   const index = goals.findIndex((goal) => goal.id === id);
@@ -134,19 +146,22 @@ export async function updateGoal(
 export async function addGoalContribution(
   id: string,
   amount: number,
+  note?: string,
 ): Promise<Goal> {
-  if (!MOCK_API_ENABLED) {
+  if (!Number.isInteger(amount) || amount <= 0) {
+    throw new Error(
+      'Nominal kontribusi harus berupa angka bulat lebih besar dari nol.',
+    );
+  }
+
+  if (!isMockApiEnabled()) {
     return apiRequest<Goal>(`/goals/${id}/contributions`, {
       method: 'POST',
-      body: { amount },
+      body: { amount, note: note?.trim() || null },
     });
   }
 
   await wait(MOCK_DELAY);
-
-  if (!Number.isInteger(amount) || amount <= 0) {
-    throw new Error('Nominal kontribusi harus berupa angka bulat lebih besar dari nol.');
-  }
 
   const goals = loadGoals();
   const index = goals.findIndex((goal) => goal.id === id);
@@ -168,7 +183,7 @@ export async function addGoalContribution(
 }
 
 export async function deleteGoal(id: string): Promise<void> {
-  if (!MOCK_API_ENABLED) {
+  if (!isMockApiEnabled()) {
     await apiRequest<void>(`/goals/${id}`, { method: 'DELETE' });
     return;
   }

@@ -1,97 +1,90 @@
-from sqlalchemy import select
+import uuid
 
-from app.models import Notification, User
-
-NOTIFICATION_PAYLOAD = {
-    "type": "budget",
-    "title": "Anggaran hampir habis",
-    "message": "Sisa anggaran gaya hidup tinggal sedikit.",
-    "link": "/budgets",
-    "is_read": False,
-}
+from app.models import Notification
 
 
-def create_notification(db_session, email="andi@example.com", **overrides):
-    user = db_session.scalar(select(User).where(User.email == email))
-    notification = Notification(
-        user_id=user.id,
-        **{**NOTIFICATION_PAYLOAD, **overrides},
+def _register(client, email: str) -> tuple[uuid.UUID, dict[str, str]]:
+    response = client.post(
+        "/api/v1/auth/register",
+        json={"name": "Notif User", "email": email, "password": "Password123"},
     )
-    db_session.add(notification)
-    db_session.commit()
-    db_session.refresh(notification)
-    return notification
-
-
-def test_list_notifications_returns_frontend_shape(client, auth, db_session):
-    account = auth()
-    create_notification(db_session)
-
-    response = client.get("/api/v1/notifications", headers=account["headers"])
-
-    assert response.status_code == 200
+    assert response.status_code == 201
     body = response.json()
-    assert len(body) == 1
-    assert body[0]["type"] == "budget"
-    assert body[0]["read"] is False
-    assert body[0]["link"] == "/budgets"
-    assert body[0]["date"]
+    return uuid.UUID(body["user"]["id"]), {"Authorization": f"Bearer {body['accessToken']}"}
 
 
-def test_unread_filter_and_mark_read(client, auth, db_session):
-    account = auth()
-    first = create_notification(db_session, title="Pertama")
-    create_notification(db_session, title="Kedua", is_read=True)
+def test_notifications_list_read_and_delete(client, db_session):
+    user_id, headers = _register(client, "notifa@example.com")
 
-    unread = client.get(
-        "/api/v1/notifications",
-        params={"unreadOnly": "true"},
-        headers=account["headers"],
+    n1 = Notification(
+        user_id=user_id,
+        type="budget",
+        severity="warning",
+        rule_code="BUDGET_WARNING",
+        title="Anggaran mendekati batas",
+        message="Anggaran Gaya Hidup sudah 80%.",
+        link="/budgets",
+        is_read=False,
     )
-    assert [item["title"] for item in unread.json()] == ["Pertama"]
-
-    marked = client.patch(
-        f"/api/v1/notifications/{first.id}/read",
-        headers=account["headers"],
+    n2 = Notification(
+        user_id=user_id,
+        type="balance",
+        severity="critical",
+        rule_code="LOW_BALANCE",
+        title="Saldo rendah",
+        message="Saldo berada di bawah batas minimum.",
+        link="/dashboard",
+        is_read=False,
     )
+    db_session.add_all([n1, n2])
+    db_session.commit()
+
+    listed = client.get("/api/v1/notifications", headers=headers)
+    assert listed.status_code == 200
+    items = listed.json()
+    assert len(items) == 2
+    assert all(item["read"] is False for item in items)
+    assert {"warning", "critical"} == {item["severity"] for item in items}
+    assert all("date" in item for item in items)
+
+    marked = client.patch(f"/api/v1/notifications/{n1.id}/read", headers=headers)
     assert marked.status_code == 200
     assert marked.json()["read"] is True
 
-    read_all = client.patch("/api/v1/notifications/read-all", headers=account["headers"])
-    assert read_all.status_code == 200
-    assert "updated" in read_all.json()
+    unread = client.get("/api/v1/notifications", headers=headers, params={"unread_only": True})
+    assert unread.status_code == 200
+    assert len(unread.json()) == 1
+    assert unread.json()[0]["id"] == str(n2.id)
 
-
-def test_delete_notification(client, auth, db_session):
-    account = auth()
-    notification = create_notification(db_session)
-
-    response = client.delete(
-        f"/api/v1/notifications/{notification.id}",
-        headers=account["headers"],
-    )
-
-    assert response.status_code == 204
-    assert client.get("/api/v1/notifications", headers=account["headers"]).json() == []
-
-
-def test_notification_isolation_between_users(client, auth, db_session):
-    auth("andi@example.com")
-    second = auth("budi@example.com")
-    notification = create_notification(db_session)
-
-    assert client.get("/api/v1/notifications", headers=second["headers"]).json() == []
+    read_all = client.post("/api/v1/notifications/read-all", headers=headers)
+    assert read_all.status_code == 204
     assert (
-        client.patch(
-            f"/api/v1/notifications/{notification.id}/read",
-            headers=second["headers"],
-        ).status_code
-        == 404
+        client.get("/api/v1/notifications", headers=headers, params={"unread_only": True}).json()
+        == []
     )
+
+    deleted = client.delete(f"/api/v1/notifications/{n1.id}", headers=headers)
+    assert deleted.status_code == 204
+    assert len(client.get("/api/v1/notifications", headers=headers).json()) == 1
+
+
+def test_notifications_multi_user_isolation(client, db_session):
+    user_a_id, _ = _register(client, "na@example.com")
+    _, headers_b = _register(client, "nb@example.com")
+
+    notif = Notification(
+        user_id=user_a_id,
+        type="info",
+        severity="normal",
+        title="Info User A",
+        message="Pesan khusus User A",
+        is_read=False,
+    )
+    db_session.add(notif)
+    db_session.commit()
+
+    assert client.get("/api/v1/notifications", headers=headers_b).json() == []
     assert (
-        client.delete(
-            f"/api/v1/notifications/{notification.id}",
-            headers=second["headers"],
-        ).status_code
-        == 404
+        client.patch(f"/api/v1/notifications/{notif.id}/read", headers=headers_b).status_code == 404
     )
+    assert client.delete(f"/api/v1/notifications/{notif.id}", headers=headers_b).status_code == 404

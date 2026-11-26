@@ -270,7 +270,7 @@ def upgrade() -> None:
 
     op.execute(
         """
-        CREATE OR REPLACE FUNCTION set_updated_at()
+        CREATE OR REPLACE FUNCTION public.set_updated_at()
         RETURNS trigger
         LANGUAGE plpgsql
         AS $$
@@ -290,8 +290,8 @@ def upgrade() -> None:
     ):
         op.execute(
             f"CREATE TRIGGER {table_name}_set_updated_at "
-            f"BEFORE UPDATE ON {table_name} "
-            "FOR EACH ROW EXECUTE FUNCTION set_updated_at()"
+            f"BEFORE UPDATE ON public.{table_name} "
+            "FOR EACH ROW EXECUTE FUNCTION public.set_updated_at()"
         )
     # ### end Alembic commands ###
 
@@ -319,5 +319,5 @@ def downgrade() -> None:
     op.drop_table("budgets")
     op.drop_index("users_email_lower_key", table_name="users")
     op.drop_table("users")
-    op.execute("DROP FUNCTION IF EXISTS set_updated_at()")
+    op.execute("DROP FUNCTION IF EXISTS public.set_updated_at()")
     # ### end Alembic commands ###

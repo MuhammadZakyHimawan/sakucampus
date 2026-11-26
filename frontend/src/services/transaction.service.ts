@@ -1,31 +1,33 @@
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '@/lib/categories';
-import { MOCK_API_ENABLED } from '@/lib/config';
+import { isMockApiEnabled } from '@/lib/config';
 import type {
   ExpenseCategory,
   IncomeCategory,
+  PeriodPreset,
   Transaction,
   TransactionInput,
+  TransactionSource,
+  TransactionType,
 } from '@/types';
 import { apiRequest } from './api-client';
 import { createId, loadDataset, saveDataset } from './data-store';
 
 const MOCK_DELAY = 300;
 
-interface TransactionResponse extends Omit<Transaction, 'note'> {
-  note?: string | null;
+export interface TransactionQueryParams {
+  type?: TransactionType;
+  category?: string;
+  source?: TransactionSource;
+  search?: string;
+  startDate?: string;
+  endDate?: string;
+  preset?: PeriodPreset;
 }
 
 function wait(milliseconds: number): Promise<void> {
   return new Promise((resolve) => {
     window.setTimeout(resolve, milliseconds);
   });
-}
-
-function toTransaction(response: TransactionResponse): Transaction {
-  return {
-    ...response,
-    note: response.note ?? undefined,
-  };
 }
 
 function isCategoryValidForType(input: TransactionInput): boolean {
@@ -58,12 +60,23 @@ function validateTransactionInput(input: TransactionInput): void {
   }
 }
 
-export async function getTransactions(): Promise<Transaction[]> {
-  if (!MOCK_API_ENABLED) {
-    const transactions =
-      await apiRequest<TransactionResponse[]>('/transactions');
-
-    return transactions.map(toTransaction);
+export async function getTransactions(
+  query?: TransactionQueryParams,
+): Promise<Transaction[]> {
+  if (!isMockApiEnabled()) {
+    return apiRequest<Transaction[]>('/transactions', {
+      params: query
+        ? {
+            type: query.type,
+            category: query.category,
+            source: query.source,
+            search: query.search,
+            start_date: query.startDate,
+            end_date: query.endDate,
+            preset: query.preset,
+          }
+        : undefined,
+    });
   }
 
   await wait(MOCK_DELAY);
@@ -74,17 +87,24 @@ export async function getTransactions(): Promise<Transaction[]> {
 export async function createTransaction(
   input: TransactionInput,
 ): Promise<Transaction> {
-  if (!MOCK_API_ENABLED) {
-    return toTransaction(
-      await apiRequest<TransactionResponse>('/transactions', {
-        method: 'POST',
-        body: input,
-      }),
-    );
+  validateTransactionInput(input);
+
+  if (!isMockApiEnabled()) {
+    return apiRequest<Transaction>('/transactions', {
+      method: 'POST',
+      body: {
+        description: input.description.trim(),
+        amount: input.amount,
+        type: input.type,
+        category: input.category,
+        date: input.date,
+        source: input.source,
+        note: input.note?.trim() ? input.note.trim() : null,
+      },
+    });
   }
 
   await wait(MOCK_DELAY);
-  validateTransactionInput(input);
 
   const dataset = loadDataset();
   const transaction: Transaction = {
@@ -108,17 +128,24 @@ export async function updateTransaction(
   id: string,
   input: TransactionInput,
 ): Promise<Transaction> {
-  if (!MOCK_API_ENABLED) {
-    return toTransaction(
-      await apiRequest<TransactionResponse>(`/transactions/${id}`, {
-        method: 'PATCH',
-        body: input,
-      }),
-    );
+  validateTransactionInput(input);
+
+  if (!isMockApiEnabled()) {
+    return apiRequest<Transaction>(`/transactions/${id}`, {
+      method: 'PATCH',
+      body: {
+        description: input.description.trim(),
+        amount: input.amount,
+        type: input.type,
+        category: input.category,
+        date: input.date,
+        source: input.source,
+        note: input.note?.trim() ? input.note.trim() : null,
+      },
+    });
   }
 
   await wait(MOCK_DELAY);
-  validateTransactionInput(input);
 
   const dataset = loadDataset();
   const index = dataset.transactions.findIndex(
@@ -144,7 +171,7 @@ export async function updateTransaction(
 }
 
 export async function deleteTransaction(id: string): Promise<void> {
-  if (!MOCK_API_ENABLED) {
+  if (!isMockApiEnabled()) {
     await apiRequest<void>(`/transactions/${id}`, { method: 'DELETE' });
     return;
   }

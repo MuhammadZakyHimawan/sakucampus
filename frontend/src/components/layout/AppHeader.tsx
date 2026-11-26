@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/features/auth/auth-context';
 import { useLogout } from '@/features/auth/useLogout';
+import { useFinanceData } from '@/hooks/finance-data-context';
 import { findNavLabel } from '@/lib/navigation';
 import { formatDate } from '@/utils/date';
 import { getInitials } from '@/utils/text';
@@ -19,6 +20,7 @@ const menuItemClasses =
 
 export function AppHeader({ onOpenMenu }: { onOpenMenu: () => void }) {
   const { user } = useAuth();
+  const { unreadNotificationCount } = useFinanceData();
   const logout = useLogout();
   const location = useLocation();
   const [open, setOpen] = useState(false);
@@ -80,10 +82,19 @@ export function AppHeader({ onOpenMenu }: { onOpenMenu: () => void }) {
         <div className="ml-auto flex items-center gap-2">
           <Link
             to="/notifications"
-            className="flex h-10 w-10 items-center justify-center rounded-lg border border-border text-ink-secondary transition-colors hover:bg-background hover:text-ink"
-            aria-label="Lihat notifikasi"
+            className="relative flex h-10 w-10 items-center justify-center rounded-lg border border-border text-ink-secondary transition-colors hover:bg-background hover:text-ink"
+            aria-label={
+              unreadNotificationCount > 0
+                ? `Lihat notifikasi (${unreadNotificationCount} belum dibaca)`
+                : 'Lihat notifikasi'
+            }
           >
             <Bell className="h-5 w-5" aria-hidden="true" />
+            {unreadNotificationCount > 0 ? (
+              <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-bold text-white">
+                {unreadNotificationCount > 99 ? '99+' : unreadNotificationCount}
+              </span>
+            ) : null}
           </Link>
 
           <div className="relative" ref={menuRef}>
@@ -95,10 +106,10 @@ export function AppHeader({ onOpenMenu }: { onOpenMenu: () => void }) {
               aria-haspopup="menu"
             >
               <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-[11px] font-bold text-white">
-                {getInitials(user?.name ?? 'Pengguna Demo')}
+                {getInitials(user?.name ?? 'Pengguna')}
               </span>
               <span className="hidden max-w-32 truncate sm:block">
-                {user?.name ?? 'Pengguna Demo'}
+                {user?.name ?? 'Pengguna'}
               </span>
               <ChevronDown
                 className="hidden h-4 w-4 text-ink-secondary sm:block"
@@ -113,10 +124,10 @@ export function AppHeader({ onOpenMenu }: { onOpenMenu: () => void }) {
               >
                 <div className="border-b border-border px-3 pb-2">
                   <p className="truncate text-sm font-semibold text-ink">
-                    {user?.name ?? 'Pengguna Demo'}
+                    {user?.name ?? 'Pengguna'}
                   </p>
                   <p className="truncate text-xs text-ink-secondary">
-                    {user?.email ?? 'andi@example.com'}
+                    {user?.email ?? ''}
                   </p>
                 </div>
                 <div className="pt-2">

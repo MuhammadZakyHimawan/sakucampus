@@ -2,17 +2,18 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { MOCK_API_ENABLED } from '@/lib/config';
+import { isMockApiEnabled } from '@/lib/config';
 import type { User } from '@/types';
 import { profileSchema } from '../schemas';
 import type { ProfileFormValues } from '../schemas';
 
 export interface ProfileFormProps {
   user: User;
-  onSubmit: (values: ProfileFormValues) => Promise<void> | void;
+  onSubmit: (values: ProfileFormValues) => void | Promise<void>;
 }
 
 export function ProfileForm({ user, onSubmit }: ProfileFormProps) {
+  const isMock = isMockApiEnabled();
   const {
     register,
     handleSubmit,
@@ -53,9 +54,9 @@ export function ProfileForm({ user, onSubmit }: ProfileFormProps) {
         type="email"
         autoComplete="email"
         hint={
-          MOCK_API_ENABLED
+          isMock
             ? 'Email pada profil demo tidak mengubah kredensial login.'
-            : 'Email ini juga digunakan untuk login.'
+            : 'Digunakan sebagai email login akun SakuCampus.'
         }
         error={errors.email?.message}
         {...register('email')}
