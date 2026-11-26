@@ -13,6 +13,7 @@ from app.core.categories import (
     TransactionType,
     categories_for_type,
 )
+from app.core.constants import MAX_MONEY_AMOUNT
 from app.schemas.base import CamelModel
 
 Description = Annotated[
@@ -24,7 +25,7 @@ Note = Annotated[str, StringConstraints(strip_whitespace=True, max_length=1000)]
 
 class TransactionPayload(CamelModel):
     description: Description
-    amount: int = Field(gt=0)
+    amount: int = Field(gt=0, le=MAX_MONEY_AMOUNT)
     type: TransactionType
     category: ExpenseCategory | IncomeCategory
     date: date
@@ -35,6 +36,8 @@ class TransactionPayload(CamelModel):
     def validate_payload(self) -> Self:
         if self.category not in categories_for_type(self.type):
             raise ValueError("Kategori tidak sesuai dengan jenis transaksi")
+        if self.source != "manual":
+            raise ValueError("Sumber transaksi harus manual")
         if self.note == "":
             self.note = None
         return self

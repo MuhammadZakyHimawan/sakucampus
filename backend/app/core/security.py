@@ -22,7 +22,7 @@ def verify_password(password: str, password_hash: str) -> bool:
         return False
 
 
-def create_access_token(user_id: uuid.UUID) -> tuple[str, int]:
+def create_access_token(user_id: uuid.UUID, token_version: int = 0) -> tuple[str, int]:
     settings = get_settings()
     lifetime = timedelta(minutes=settings.access_token_expire_minutes)
     now = datetime.now(UTC)
@@ -31,19 +31,20 @@ def create_access_token(user_id: uuid.UUID) -> tuple[str, int]:
         "iat": int(now.timestamp()),
         "exp": int((now + lifetime).timestamp()),
         "type": "access",
+        "ver": token_version,
     }
     token = jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
     return token, int(lifetime.total_seconds())
 
 
-def decode_access_token(token: str) -> uuid.UUID:
+def decode_access_token(token: str) -> tuple[uuid.UUID, int]:
     settings = get_settings()
     try:
         payload = jwt.decode(
             token,
             settings.jwt_secret,
             algorithms=[settings.jwt_algorithm],
-            options={"require": ["sub", "exp", "iat", "type"]},
+            options={"require": ["sub", "exp", "iat", "type", "ver"]},
         )
     except jwt.ExpiredSignatureError as exc:
         raise InvalidTokenError("Token has expired") from exc
@@ -54,6 +55,15 @@ def decode_access_token(token: str) -> uuid.UUID:
         raise InvalidTokenError("Token type is invalid")
 
     try:
-        return uuid.UUID(str(payload["sub"]))
+        token_version = int(payload["ver"])
+        if token_version < 0:
+            raise ValueError
+    except (TypeError, ValueError) as exc:
+        raise InvalidTokenError("Token version is invalid") from exc
+
+    try:
+        user_id = uuid.UUID(str(payload["sub"]))
     except (TypeError, ValueError) as exc:
         raise InvalidTokenError("Token subject is invalid") from exc
+
+    return user_id, token_version

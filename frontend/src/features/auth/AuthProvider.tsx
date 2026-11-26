@@ -1,7 +1,9 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
+import { MOCK_API_ENABLED } from '@/lib/config';
 import {
   changePassword as changePasswordRequest,
+  getCurrentUser,
   getStoredUser,
   login as loginRequest,
   logout as logoutRequest,
@@ -15,6 +17,26 @@ import { AuthContext } from './auth-context';
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(() => getStoredUser());
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+  useEffect(() => {
+    if (MOCK_API_ENABLED) {
+      return;
+    }
+
+    let active = true;
+
+    void getCurrentUser().then((restoredUser) => {
+      if (!active) {
+        return;
+      }
+
+      setUser(restoredUser);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const login = useCallback(async (email: string, password: string) => {
     setIsLoggingIn(true);
@@ -35,7 +57,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(() => {
-    logoutRequest();
+    void logoutRequest().catch(() => undefined);
     setUser(null);
   }, []);
 

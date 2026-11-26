@@ -12,6 +12,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/Card';
+import { MOCK_API_ENABLED } from '@/lib/config';
 import { cn } from '@/lib/cn';
 import { NO_INSIGHTS_MESSAGE } from '@/lib/constants';
 import type { FinancialInsight, InsightTone } from '@/types';
@@ -57,7 +58,9 @@ export function FinancialInsights({
         <div>
           <CardTitle>Financial Insight</CardTitle>
           <CardDescription>
-            Dihitung otomatis dari mock data demo.
+            {MOCK_API_ENABLED
+              ? 'Dihitung dari data contoh di browser.'
+              : 'Dihitung dari data transaksi dan anggaranmu.'}
           </CardDescription>
         </div>
       </CardHeader>

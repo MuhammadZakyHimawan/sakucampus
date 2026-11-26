@@ -2,7 +2,7 @@ import { LogOut, Wallet, X } from 'lucide-react';
 import { useEffect } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { createPortal } from 'react-dom';
-import { APP_NAME } from '@/lib/config';
+import { APP_NAME, MOCK_API_ENABLED } from '@/lib/config';
 import { cn } from '@/lib/cn';
 import { useAuth } from '@/features/auth/auth-context';
 import { useLogout } from '@/features/auth/useLogout';
@@ -125,7 +125,7 @@ export function MobileNavigation({ open, onClose }: MobileNavigationProps) {
                 {user?.name ?? 'Pengguna Demo'}
               </p>
               <p className="truncate text-xs text-ink-secondary">
-                Mode demo · data contoh
+                {MOCK_API_ENABLED ? 'Mode demo · data contoh' : 'Akun tersinkron'}
               </p>
             </div>
           </div>

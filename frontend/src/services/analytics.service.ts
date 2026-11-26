@@ -1,3 +1,4 @@
+import { MOCK_API_ENABLED } from '@/lib/config';
 import type {
   Budget,
   BudgetOverviewItem,
@@ -21,7 +22,9 @@ import {
   groupExpensesByCategory,
 } from '@/utils/calculations';
 import { formatCurrency } from '@/utils/currency';
+import { toISODate } from '@/utils/date';
 import { getPeriodRange, getPreviousPeriodRange, isWithinRange } from '@/utils/period';
+import { apiRequest } from './api-client';
 
 export interface DashboardDataInput {
   user: User;
@@ -280,4 +283,30 @@ export function buildDashboardData({
     recentTransactions,
     transactionCount: periodTransactions.length,
   };
+}
+
+function analyticsQuery(input: { preset: PeriodPreset; reference?: Date }): string {
+  const params = new URLSearchParams({ preset: input.preset });
+  if (input.reference) {
+    params.set('reference', toISODate(input.reference));
+  }
+  return params.toString();
+}
+
+export function fetchDashboardData(input: DashboardDataInput): Promise<DashboardData> {
+  if (MOCK_API_ENABLED) {
+    return Promise.resolve(buildDashboardData(input));
+  }
+
+  return apiRequest<DashboardData>(
+    `/analytics/dashboard?${analyticsQuery(input)}`,
+  );
+}
+
+export function fetchReportData(input: ReportDataInput): Promise<ReportData> {
+  if (MOCK_API_ENABLED) {
+    return Promise.resolve(buildReportData(input));
+  }
+
+  return apiRequest<ReportData>(`/analytics/report?${analyticsQuery(input)}`);
 }

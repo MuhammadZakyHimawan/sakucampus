@@ -11,7 +11,7 @@ from app.core.dependencies import get_current_user
 from app.database import get_db
 from app.models import User
 from app.schemas.budget import BudgetCreate, BudgetOut, BudgetUpdate
-from app.services import budget_service
+from app.services import budget_service, rule_engine
 from app.services.errors import ResourceConflictError, ResourceNotFoundError
 
 router = APIRouter(prefix="/budgets", tags=["budgets"])
@@ -36,13 +36,15 @@ def list_budgets(
 
 
 @router.post("", response_model=BudgetOut, status_code=status.HTTP_201_CREATED)
-def create_budget(
+async def create_budget(
     payload: BudgetCreate,
     current_user: CurrentUser,
     db: DbSession,
 ) -> BudgetOut:
     try:
-        return budget_service.create_budget(db, current_user.id, payload)
+        result = budget_service.create_budget(db, current_user.id, payload)
+        await rule_engine.evaluate_and_notify(db, current_user)
+        return result
     except ResourceConflictError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -51,14 +53,16 @@ def create_budget(
 
 
 @router.patch("/{budget_id}", response_model=BudgetOut)
-def update_budget(
+async def update_budget(
     budget_id: uuid.UUID,
     payload: BudgetUpdate,
     current_user: CurrentUser,
     db: DbSession,
 ) -> BudgetOut:
     try:
-        return budget_service.update_budget(db, current_user.id, budget_id, payload)
+        result = budget_service.update_budget(db, current_user.id, budget_id, payload)
+        await rule_engine.evaluate_and_notify(db, current_user)
+        return result
     except ResourceNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -72,7 +76,7 @@ def update_budget(
 
 
 @router.delete("/{budget_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_budget(
+async def delete_budget(
     budget_id: uuid.UUID,
     current_user: CurrentUser,
     db: DbSession,
@@ -85,4 +89,5 @@ def delete_budget(
             detail=str(exc),
         ) from exc
 
+    await rule_engine.evaluate_and_notify(db, current_user)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

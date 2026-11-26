@@ -1,6 +1,6 @@
-from typing import Annotated
+from typing import Annotated, Self
 
-from pydantic import EmailStr, Field, StringConstraints, field_validator
+from pydantic import EmailStr, Field, StringConstraints, field_validator, model_validator
 
 from app.schemas.base import CamelModel
 from app.schemas.user import UserOut
@@ -65,9 +65,13 @@ class ChangePasswordRequest(CamelModel):
     def validate_password(cls, value: str) -> str:
         return validate_password_strength(value)
 
+    @model_validator(mode="after")
+    def validate_new_password(self) -> Self:
+        if self.new_password == self.current_password:
+            raise ValueError("Password baru harus berbeda dari password saat ini")
+        return self
+
 
 class AuthResponse(CamelModel):
-    access_token: str
-    token_type: str = "Bearer"
     expires_in: int
     user: UserOut

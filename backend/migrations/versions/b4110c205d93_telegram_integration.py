@@ -70,16 +70,14 @@ def upgrade() -> None:
     )
     op.execute(
         "CREATE TRIGGER telegram_accounts_set_updated_at "
-        "BEFORE UPDATE ON public.telegram_accounts "
-        "FOR EACH ROW EXECUTE FUNCTION public.set_updated_at()"
+        "BEFORE UPDATE ON telegram_accounts "
+        "FOR EACH ROW EXECUTE FUNCTION set_updated_at()"
     )
 
 
 def downgrade() -> None:
     """Downgrade schema."""
-    op.execute(
-        "DROP TRIGGER IF EXISTS telegram_accounts_set_updated_at ON public.telegram_accounts"
-    )
+    op.execute("DROP TRIGGER IF EXISTS telegram_accounts_set_updated_at ON telegram_accounts")
     op.drop_index(op.f("ix_telegram_link_tokens_user_id"), table_name="telegram_link_tokens")
     op.drop_table("telegram_link_tokens")
     op.drop_table("telegram_accounts")

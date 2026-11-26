@@ -6,6 +6,7 @@ from typing import Annotated, Self
 
 from pydantic import Field, StringConstraints, field_validator, model_validator
 
+from app.core.constants import MAX_MONEY_AMOUNT
 from app.schemas.base import CamelModel
 
 GoalName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)]
@@ -14,7 +15,7 @@ ContributionNote = Annotated[str, StringConstraints(strip_whitespace=True, max_l
 
 class GoalPayload(CamelModel):
     name: GoalName
-    target_amount: int = Field(gt=0)
+    target_amount: int = Field(gt=0, le=MAX_MONEY_AMOUNT)
     deadline: date
 
 
@@ -27,7 +28,7 @@ class GoalUpdate(GoalPayload):
 
 
 class GoalContributionCreate(CamelModel):
-    amount: int = Field(gt=0)
+    amount: int = Field(gt=0, le=MAX_MONEY_AMOUNT)
     note: ContributionNote | None = None
 
     @model_validator(mode="after")

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowDownLeft,
   ArrowDownRight,
@@ -31,8 +31,11 @@ import { useFinanceData } from '@/hooks/finance-data-context';
 import { TRANSACTION_TYPE_LABELS } from '@/lib/categories';
 import { MOCK_API_ENABLED } from '@/lib/config';
 import { DEFAULT_DASHBOARD_PERIOD, NO_REPORTS_MESSAGE } from '@/lib/constants';
-import { buildReportData } from '@/services/analytics.service';
-import type { PeriodPreset } from '@/types';
+import {
+  buildReportData,
+  fetchReportData,
+} from '@/services/analytics.service';
+import type { PeriodPreset, ReportData } from '@/types';
 import { formatCurrency } from '@/utils/currency';
 import { downloadCsv } from '@/utils/csv';
 import { formatDate } from '@/utils/date';
@@ -97,10 +100,39 @@ export function ReportsPage() {
   const { transactions, isLoading, error } = useFinanceData();
   const { toast } = useToast();
   const [period, setPeriod] = useState<PeriodPreset>(DEFAULT_DASHBOARD_PERIOD);
-  const report = useMemo(
+  const localReport = useMemo(
     () => buildReportData({ transactions, preset: period }),
     [transactions, period],
   );
+  const [report, setReport] = useState<ReportData>(localReport);
+  const [reportError, setReportError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let isActive = true;
+
+    fetchReportData({ transactions, preset: period })
+      .then((data) => {
+        if (!isActive) {
+          return;
+        }
+        setReport(data);
+        setReportError(null);
+      })
+      .catch((fetchError: unknown) => {
+        if (!isActive) {
+          return;
+        }
+        setReportError(
+          fetchError instanceof Error
+            ? fetchError.message
+            : 'Gagal memuat laporan dari server.',
+        );
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [transactions, period]);
 
   const hasTransactions = report.transactions.length > 0;
 
@@ -193,9 +225,9 @@ export function ReportsPage() {
         <Card>
           <LoadingState message="Memuat laporan..." />
         </Card>
-      ) : error ? (
+      ) : error || reportError ? (
         <Card>
-          <ErrorState message={error} />
+          <ErrorState message={error ?? reportError ?? ''} />
         </Card>
       ) : !hasTransactions ? (
         <Card>

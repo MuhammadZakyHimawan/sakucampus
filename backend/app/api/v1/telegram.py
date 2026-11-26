@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user
 from app.database import get_db
 from app.models import User
-from app.schemas.telegram import TelegramLinkTokenOut, TelegramStatusOut
-from app.services import telegram_service
+from app.schemas.telegram import TelegramLinkTokenOut, TelegramStatusOut, TelegramUpdateIn
+from app.services import rule_engine, telegram_service
 
 router = APIRouter(prefix="/telegram", tags=["telegram"])
 
@@ -37,25 +38,51 @@ def unlink_telegram(current_user: CurrentUser, db: DbSession) -> TelegramStatusO
 
 @router.post("/webhook")
 async def telegram_webhook(
-    update: dict[str, Any],
+    request: Request,
     db: DbSession,
     x_telegram_bot_api_secret_token: Annotated[
         str | None,
         Header(alias="X-Telegram-Bot-Api-Secret-Token"),
     ] = None,
 ) -> dict[str, bool]:
-    telegram_service.verify_webhook_secret(x_telegram_bot_api_secret_token)
+    telegram_service.verify_webhook_secret(
+        x_telegram_bot_api_secret_token,
+        request=request,
+        db=db,
+    )
 
-    update_id = update.get("update_id")
-    if isinstance(update_id, int) and telegram_service.was_processed(db, update_id):
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Payload webhook Telegram tidak valid",
+        ) from exc
+
+    try:
+        update = TelegramUpdateIn.model_validate(payload)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=exc.errors(),
+        ) from exc
+
+    if not telegram_service.claim_update(db, update.update_id):
         return {"ok": True}
 
-    reply = telegram_service.process_update(db, update)
-
-    if isinstance(update_id, int):
-        telegram_service.mark_processed(db, update_id)
-
-    if reply is not None:
-        await telegram_service.send_message(reply.chat_id, reply.text)
+    try:
+        reply = telegram_service.process_update(
+            db,
+            update.model_dump(by_alias=True, exclude_none=True),
+        )
+        if reply is not None:
+            await telegram_service.send_message(reply.chat_id, reply.text)
+            if reply.user_id is not None:
+                user = db.get(User, reply.user_id)
+                if user is not None:
+                    await rule_engine.evaluate_and_notify(db, user)
+    except Exception:
+        telegram_service.release_update(db, update_id=update.update_id)
+        raise
 
     return {"ok": True}

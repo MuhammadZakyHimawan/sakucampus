@@ -98,12 +98,26 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash text NOT NULL
     CHECK (char_length(password_hash) > 0),
   avatar_url text NULL,
+  token_version integer NOT NULL DEFAULT 0,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_key
   ON users (lower(email));
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = current_schema()
+      AND table_name = 'users'
+      AND column_name = 'token_version'
+  ) THEN
+    ALTER TABLE users ADD COLUMN token_version integer NOT NULL DEFAULT 0;
+  END IF;
+END $$;
 
 \echo '==> Membuat tabel finance_settings...'
 
@@ -239,6 +253,8 @@ CREATE TABLE IF NOT EXISTS notifications (
   message text NOT NULL
     CHECK (char_length(btrim(message)) > 0),
   link text NULL,
+  rule_key text NULL,
+  CONSTRAINT notifications_user_rule_key_key UNIQUE (user_id, rule_key),
   is_read boolean NOT NULL DEFAULT false,
   created_at timestamptz NOT NULL DEFAULT now()
 );
@@ -272,6 +288,22 @@ CREATE TABLE IF NOT EXISTS telegram_processed_updates (
   processed_at timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS security_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NULL
+    REFERENCES users (id) ON DELETE SET NULL,
+  event_type text NOT NULL
+    CHECK (char_length(btrim(event_type)) BETWEEN 1 AND 120),
+  outcome text NOT NULL DEFAULT 'failure'
+    CHECK (outcome IN ('success', 'failure')),
+  ip_address text NULL,
+  user_agent text NULL,
+  request_id text NULL,
+  details jsonb NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
 \echo '==> Membuat indexes...'
 
 CREATE INDEX IF NOT EXISTS transactions_user_date_idx
@@ -301,6 +333,15 @@ CREATE INDEX IF NOT EXISTS notifications_user_unread_idx
 
 CREATE INDEX IF NOT EXISTS telegram_link_tokens_user_id_idx
   ON telegram_link_tokens (user_id);
+
+CREATE INDEX IF NOT EXISTS security_events_user_id_idx
+  ON security_events (user_id);
+
+CREATE INDEX IF NOT EXISTS security_events_event_type_idx
+  ON security_events (event_type);
+
+CREATE INDEX IF NOT EXISTS security_events_created_at_idx
+  ON security_events (created_at);
 
 \echo '==> Membuat trigger updated_at...'
 
@@ -337,6 +378,12 @@ CREATE TRIGGER goals_set_updated_at
 DROP TRIGGER IF EXISTS telegram_accounts_set_updated_at ON telegram_accounts;
 CREATE TRIGGER telegram_accounts_set_updated_at
   BEFORE UPDATE ON telegram_accounts
+  FOR EACH ROW
+  EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS security_events_set_updated_at ON security_events;
+CREATE TRIGGER security_events_set_updated_at
+  BEFORE UPDATE ON security_events
   FOR EACH ROW
   EXECUTE FUNCTION set_updated_at();
 

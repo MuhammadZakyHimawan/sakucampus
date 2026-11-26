@@ -42,13 +42,13 @@ def build_user_out(db: Session, user: User) -> UserOut:
     )
 
 
-def build_auth_response(db: Session, user: User) -> AuthResponse:
-    token, expires_in = create_access_token(user.id)
-    return AuthResponse(
-        access_token=token,
+def build_auth_response(db: Session, user: User) -> tuple[AuthResponse, str]:
+    token, expires_in = create_access_token(user.id, user.token_version)
+    response = AuthResponse(
         expires_in=expires_in,
         user=build_user_out(db, user),
     )
+    return response, token
 
 
 def register_user(db: Session, payload: RegisterRequest) -> User:
@@ -125,4 +125,10 @@ def change_user_password(
         raise InvalidCredentialsError
 
     user.password_hash = hash_password(payload.new_password)
+    revoke_user_tokens(db, user)
+
+
+def revoke_user_tokens(db: Session, user: User) -> None:
+    user.token_version += 1
     db.commit()
+    db.refresh(user)

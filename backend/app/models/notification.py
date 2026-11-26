@@ -9,6 +9,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Text,
+    UniqueConstraint,
     Uuid,
     desc,
     func,
@@ -34,6 +35,7 @@ class Notification(Base):
             "user_id",
             postgresql_where=text("is_read = false"),
         ),
+        UniqueConstraint("user_id", "rule_key", name="notifications_user_rule_key_key"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
@@ -46,6 +48,7 @@ class Notification(Base):
     title: Mapped[str] = mapped_column(Text, nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
     link: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rule_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_read: Mapped[bool] = mapped_column(
         nullable=False,
         default=False,

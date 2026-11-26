@@ -1,5 +1,6 @@
 import os
 from collections.abc import Generator
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
@@ -7,12 +8,14 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+os.environ["ENVIRONMENT"] = "test"
 os.environ["DATABASE_URL"] = "sqlite+pysqlite:///:memory:"
 os.environ["JWT_SECRET"] = "test-secret-with-at-least-thirty-two-characters"
 os.environ["ACCESS_TOKEN_EXPIRE_MINUTES"] = "60"
 os.environ["CORS_ORIGINS"] = "http://localhost:5173"
 
 from app import models  # noqa: E402, F401
+from app.core.security import create_access_token  # noqa: E402
 from app.database import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402
 
@@ -76,8 +79,11 @@ def auth(client: TestClient):
         assert response.status_code == 201, response.json()
         body = response.json()
 
+        token, _ = create_access_token(UUID(body["user"]["id"]))
+        client.cookies.clear()
+
         return {
-            "headers": {"Authorization": f"Bearer {body['accessToken']}"},
+            "headers": {"Authorization": f"Bearer {token}"},
             "user": body["user"],
         }
 

@@ -15,7 +15,7 @@ from app.schemas.goal import (
     GoalOut,
     GoalUpdate,
 )
-from app.services import goal_service
+from app.services import goal_service, rule_engine
 
 router = APIRouter(prefix="/goals", tags=["goals"])
 
@@ -29,12 +29,14 @@ def list_goals(current_user: CurrentUser, db: DbSession) -> list[GoalOut]:
 
 
 @router.post("", response_model=GoalOut, status_code=status.HTTP_201_CREATED)
-def create_goal(
+async def create_goal(
     payload: GoalCreate,
     current_user: CurrentUser,
     db: DbSession,
 ) -> GoalOut:
-    return goal_service.create_goal(db, current_user.id, payload)
+    result = goal_service.create_goal(db, current_user.id, payload)
+    await rule_engine.evaluate_and_notify(db, current_user)
+    return result
 
 
 @router.get("/{goal_id}", response_model=GoalOut)
@@ -47,35 +49,40 @@ def get_goal(
 
 
 @router.patch("/{goal_id}", response_model=GoalOut)
-def update_goal(
+async def update_goal(
     goal_id: uuid.UUID,
     payload: GoalUpdate,
     current_user: CurrentUser,
     db: DbSession,
 ) -> GoalOut:
-    return goal_service.update_goal(db, current_user.id, goal_id, payload)
+    result = goal_service.update_goal(db, current_user.id, goal_id, payload)
+    await rule_engine.evaluate_and_notify(db, current_user)
+    return result
 
 
 @router.post("/{goal_id}/contributions", response_model=GoalOut)
-def add_goal_contribution(
+async def add_goal_contribution(
     goal_id: uuid.UUID,
     payload: GoalContributionCreate,
     current_user: CurrentUser,
     db: DbSession,
 ) -> GoalOut:
-    return goal_service.add_goal_contribution(
+    result = goal_service.add_goal_contribution(
         db,
         current_user.id,
         goal_id,
         payload,
     )
+    await rule_engine.evaluate_and_notify(db, current_user)
+    return result
 
 
 @router.delete("/{goal_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_goal(
+async def delete_goal(
     goal_id: uuid.UUID,
     current_user: CurrentUser,
     db: DbSession,
 ) -> Response:
     goal_service.delete_goal(db, current_user.id, goal_id)
+    await rule_engine.evaluate_and_notify(db, current_user)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

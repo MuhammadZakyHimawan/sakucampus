@@ -1,4 +1,5 @@
-import { getStoredToken } from './session-storage';
+import { CSRF_HEADER_NAME } from '@/lib/config';
+import { getCsrfToken } from './session-storage';
 
 const DEFAULT_API_BASE_URL = 'http://localhost:8000/api/v1';
 
@@ -98,6 +99,7 @@ export async function apiRequest<T>(
   const { body, headers: customHeaders, ...rest } = options;
   const url = `${getApiBaseUrl()}/${path.replace(/^\/+/, '')}`;
   const headers = new Headers(customHeaders);
+  const method = (options.method ?? 'GET').toUpperCase();
 
   headers.set('Accept', 'application/json');
 
@@ -105,10 +107,12 @@ export async function apiRequest<T>(
     headers.set('Content-Type', 'application/json');
   }
 
-  const token = getStoredToken();
+  if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(method)) {
+    const csrfToken = getCsrfToken();
 
-  if (token && !headers.has('Authorization')) {
-    headers.set('Authorization', `Bearer ${token}`);
+    if (csrfToken) {
+      headers.set(CSRF_HEADER_NAME, csrfToken);
+    }
   }
 
   let response: Response;
@@ -116,6 +120,8 @@ export async function apiRequest<T>(
   try {
     response = await fetch(url, {
       ...rest,
+      method,
+      credentials: 'include',
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     });

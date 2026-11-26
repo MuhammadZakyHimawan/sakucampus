@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { Bell, BellOff, CheckCheck, Settings2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Badge } from '@/components/ui/Badge';
@@ -110,6 +111,34 @@ export function NotificationsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isMarkingAll, setIsMarkingAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const handleTabKeyDown = (
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    index: number,
+  ): void => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+      return;
+    }
+
+    event.preventDefault();
+    let nextIndex = index;
+    if (event.key === 'ArrowLeft') {
+      nextIndex = (index - 1 + TAB_OPTIONS.length) % TAB_OPTIONS.length;
+    } else if (event.key === 'ArrowRight') {
+      nextIndex = (index + 1) % TAB_OPTIONS.length;
+    } else if (event.key === 'Home') {
+      nextIndex = 0;
+    } else {
+      nextIndex = TAB_OPTIONS.length - 1;
+    }
+
+    const tabs = Array.from(
+      event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ??
+        [],
+    );
+    setActiveTab(TAB_OPTIONS[nextIndex].value);
+    tabs[nextIndex]?.focus();
+  };
 
   useEffect(() => {
     let isActive = true;
@@ -362,7 +391,7 @@ export function NotificationsPage() {
           role="tablist"
           aria-label="Filter notifikasi"
         >
-          {TAB_OPTIONS.map((tab) => {
+          {TAB_OPTIONS.map((tab, tabIndex) => {
             const isActive = tab.value === activeTab;
             const count =
               tab.value === 'unread'
@@ -372,10 +401,14 @@ export function NotificationsPage() {
             return (
               <button
                 key={tab.value}
+                id={`notification-tab-${tab.value}`}
                 type="button"
                 role="tab"
                 aria-selected={isActive}
+                aria-controls="notification-panel"
+                tabIndex={isActive ? 0 : -1}
                 onClick={() => setActiveTab(tab.value)}
+                onKeyDown={(event) => handleTabKeyDown(event, tabIndex)}
                 className={cn(
                   'inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors sm:text-sm',
                   isActive
@@ -399,56 +432,63 @@ export function NotificationsPage() {
           })}
         </div>
 
-        {isLoading ? (
-          <Card>
-            <LoadingState message="Memuat notifikasi..." />
-          </Card>
-        ) : error ? (
-          <Card>
-            <ErrorState message={error} />
-          </Card>
-        ) : notifications.length === 0 ? (
-          <Card>
-            <EmptyState
-              icon={BellOff}
-              title="Belum ada notifikasi"
-              description={NO_NOTIFICATIONS_MESSAGE}
-            />
-          </Card>
-        ) : visibleNotifications.length === 0 ? (
-          <Card>
-            <EmptyState
-              icon={BellOff}
-              title="Tidak ada notifikasi yang ditampilkan"
-              description="Semua jenis notifikasi sedang dimatikan pada preferensi. Aktifkan salah satu preferensi untuk melihat notifikasi terkait."
-            />
-          </Card>
-        ) : displayedNotifications.length === 0 ? (
-          <Card>
-            <EmptyState
-              icon={Bell}
-              title="Semua notifikasi sudah dibaca"
-              description={NO_UNREAD_NOTIFICATIONS_MESSAGE}
-              action={
-                <Button variant="outline" onClick={() => setActiveTab('all')}>
-                  Lihat semua notifikasi
-                </Button>
-              }
-            />
-          </Card>
-        ) : (
-          <div className="flex flex-col gap-3">
-            {displayedNotifications.map((notification) => (
-              <NotificationItem
-                key={notification.id}
-                notification={notification}
-                onOpen={handleOpen}
-                onMarkRead={handleMarkRead}
-                onDelete={handleDelete}
+        <div
+          id="notification-panel"
+          role="tabpanel"
+          aria-labelledby={`notification-tab-${activeTab}`}
+          className="flex flex-col gap-3"
+        >
+          {isLoading ? (
+            <Card>
+              <LoadingState message="Memuat notifikasi..." />
+            </Card>
+          ) : error ? (
+            <Card>
+              <ErrorState message={error} />
+            </Card>
+          ) : notifications.length === 0 ? (
+            <Card>
+              <EmptyState
+                icon={BellOff}
+                title="Belum ada notifikasi"
+                description={NO_NOTIFICATIONS_MESSAGE}
               />
-            ))}
-          </div>
-        )}
+            </Card>
+          ) : visibleNotifications.length === 0 ? (
+            <Card>
+              <EmptyState
+                icon={BellOff}
+                title="Tidak ada notifikasi yang ditampilkan"
+                description="Semua jenis notifikasi sedang dimatikan pada preferensi. Aktifkan salah satu preferensi untuk melihat notifikasi terkait."
+              />
+            </Card>
+          ) : displayedNotifications.length === 0 ? (
+            <Card>
+              <EmptyState
+                icon={Bell}
+                title="Semua notifikasi sudah dibaca"
+                description={NO_UNREAD_NOTIFICATIONS_MESSAGE}
+                action={
+                  <Button variant="outline" onClick={() => setActiveTab('all')}>
+                    Lihat semua notifikasi
+                  </Button>
+                }
+              />
+            </Card>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {displayedNotifications.map((notification) => (
+                <NotificationItem
+                  key={notification.id}
+                  notification={notification}
+                  onOpen={handleOpen}
+                  onMarkRead={handleMarkRead}
+                  onDelete={handleDelete}
+                />
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -2,25 +2,22 @@ import { DEFAULT_CURRENCY, MOCK_API_ENABLED, STORAGE_KEYS } from '@/lib/config';
 import { DEMO_CREDENTIALS, DEMO_USER } from '@/mocks/users';
 import type { RegisterInput, User } from '@/types';
 import { apiRequest } from './api-client';
-import {
-  clearStoredToken,
-  getStoredToken,
-  storeToken,
-} from './session-storage';
+import { clearStoredUser } from './session-storage';
 
 const MOCK_DELAY = 500;
 
 let mockPassword: string = DEMO_CREDENTIALS.password;
 
-export type UserUpdate = Partial<
-  Pick<
-    User,
-    'name' | 'email' | 'initialBalance' | 'minBalance' | 'currency' | 'avatarUrl'
-  >
->;
+export interface UserUpdate {
+  name?: string;
+  email?: string;
+  initialBalance?: number;
+  minBalance?: number;
+  currency?: string;
+  avatarUrl?: string | null;
+}
 
 interface AuthResponsePayload {
-  accessToken: string;
   expiresIn: number;
   user: unknown;
 }
@@ -112,12 +109,9 @@ function getStoredDemoProfile(): User | null {
 }
 
 function applyUpdates(current: User, updates: UserUpdate): User {
+  const requestedAvatar = updates.avatarUrl?.trim();
   const avatarUrl =
-    updates.avatarUrl === undefined
-      ? current.avatarUrl
-      : updates.avatarUrl.trim()
-        ? updates.avatarUrl.trim()
-        : undefined;
+    updates.avatarUrl === undefined ? current.avatarUrl : requestedAvatar || undefined;
 
   return {
     ...current,
@@ -131,13 +125,8 @@ function applyUpdates(current: User, updates: UserUpdate): User {
 }
 
 function persistSession(payload: AuthResponsePayload): User {
-  if (typeof payload.accessToken !== 'string' || !payload.accessToken) {
-    throw new Error('Token akses dari server tidak valid.');
-  }
-
   const user = requireUser(payload.user);
 
-  storeToken(payload.accessToken);
   writeStoredUser(user);
 
   return user;
@@ -213,21 +202,38 @@ export async function register(input: RegisterInput): Promise<User> {
   return registeredUser;
 }
 
-export function logout(): void {
-  if (!MOCK_API_ENABLED) {
-    void apiRequest('/auth/logout', { method: 'POST' }).catch(() => undefined);
+export async function logout(): Promise<void> {
+  if (MOCK_API_ENABLED) {
+    clearStoredUser();
+    return;
   }
 
-  clearStoredToken();
-  window.localStorage.removeItem(STORAGE_KEYS.auth);
+  try {
+    await apiRequest('/auth/logout', { method: 'POST' });
+  } finally {
+    clearStoredUser();
+  }
 }
 
 export function getStoredUser(): User | null {
-  if (!MOCK_API_ENABLED && !getStoredToken()) {
-    return null;
+  return readStoredUser(STORAGE_KEYS.auth);
+}
+
+export async function getCurrentUser(): Promise<User | null> {
+  if (MOCK_API_ENABLED) {
+    return getStoredUser();
   }
 
-  return readStoredUser(STORAGE_KEYS.auth);
+  try {
+    const user = requireUser(await apiRequest<unknown>('/auth/me'));
+    writeStoredUser(user);
+
+    return user;
+  } catch {
+    clearStoredUser();
+
+    return null;
+  }
 }
 
 export function updateStoredUser(updates: UserUpdate): User {
@@ -254,7 +260,7 @@ export async function updateProfile(updates: UserUpdate): Promise<User> {
   }
 
   if (updates.avatarUrl !== undefined) {
-    profilePayload.avatarUrl = updates.avatarUrl.trim() || null;
+    profilePayload.avatarUrl = updates.avatarUrl?.trim() || null;
   }
 
   const serverUser =

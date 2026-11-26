@@ -4,7 +4,7 @@ TRANSACTION_PAYLOAD = {
     "type": "expense",
     "category": "Kebutuhan Primer",
     "date": "2026-11-10",
-    "source": "telegram",
+    "source": "manual",
 }
 
 
@@ -24,7 +24,14 @@ def test_create_transaction_returns_camel_case(client, auth):
     assert body["type"] == "expense"
     assert body["category"] == "Kebutuhan Primer"
     assert body["date"] == "2026-11-10"
-    assert body["source"] == "telegram"
+    assert body["source"] == "manual"
+
+
+def test_create_transaction_rejects_telegram_source(client, auth):
+    account = auth()
+    response = create_transaction(client, account["headers"], source="telegram")
+
+    assert response.status_code == 422
 
 
 def test_list_transactions_filters_and_sorts(client, auth):

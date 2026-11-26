@@ -7,12 +7,13 @@ from typing import Self
 from pydantic import Field, model_validator
 
 from app.core.categories import ExpenseCategory
+from app.core.constants import MAX_MONEY_AMOUNT
 from app.schemas.base import CamelModel
 
 
 class BudgetPayload(CamelModel):
     category: ExpenseCategory
-    limit: int = Field(gt=0)
+    limit: int = Field(gt=0, le=MAX_MONEY_AMOUNT)
     period_start: date
     period_end: date
 

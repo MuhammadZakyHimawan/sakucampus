@@ -1,4 +1,4 @@
-import { STORAGE_KEYS } from '@/lib/config';
+import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME, STORAGE_KEYS } from '@/lib/config';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const API_USER = {
@@ -24,12 +24,21 @@ function jsonResponse(payload: unknown, status = 200): Response {
   } as unknown as Response;
 }
 
+function setCsrfCookie(value = 'csrf-1'): void {
+  document.cookie = `${CSRF_COOKIE_NAME}=${encodeURIComponent(value)}; path=/`;
+}
+
+function clearCsrfCookie(): void {
+  document.cookie = `${CSRF_COOKIE_NAME}=; max-age=0; path=/`;
+}
+
 describe('auth service (HTTP mode)', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.stubEnv('VITE_USE_MOCK_API', 'false');
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.example.test/v1');
     window.localStorage.clear();
+    clearCsrfCookie();
   });
 
   afterEach(() => {
@@ -37,12 +46,12 @@ describe('auth service (HTTP mode)', () => {
     vi.unstubAllGlobals();
     vi.resetModules();
     window.localStorage.clear();
+    clearCsrfCookie();
   });
 
-  it('logs in, stores the token, and reads the cached user', async () => {
+  it('logs in, caches the user, and uses cookie-based requests', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       jsonResponse({
-        accessToken: 'token-1',
         expiresIn: 3600,
         user: API_USER,
       }),
@@ -56,19 +65,21 @@ describe('auth service (HTTP mode)', () => {
       ...API_USER,
       avatarUrl: undefined,
     });
-    expect(window.localStorage.getItem(STORAGE_KEYS.token)).toBe('token-1');
     expect(auth.getStoredUser()).toEqual(user);
+    expect(window.localStorage.getItem('sakucampus.token.v1')).toBeNull();
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Headers;
 
     expect(url).toBe('https://api.example.test/v1/auth/login');
     expect(init.body).toBe(
       JSON.stringify({ email: 'andi@example.com', password: 'demo1234' }),
     );
+    expect(init.credentials).toBe('include');
+    expect(headers.get('Authorization')).toBeNull();
   });
 
   it('does not call the profile endpoint for local-only balance updates', async () => {
-    window.localStorage.setItem(STORAGE_KEYS.token, 'token-1');
     window.localStorage.setItem(
       STORAGE_KEYS.auth,
       JSON.stringify({ ...API_USER, avatarUrl: undefined }),
@@ -84,8 +95,8 @@ describe('auth service (HTTP mode)', () => {
     expect(auth.getStoredUser()?.initialBalance).toBe(2_000_000);
   });
 
-  it('changes the password through the API', async () => {
-    window.localStorage.setItem(STORAGE_KEYS.token, 'token-1');
+  it('changes the password with the CSRF header', async () => {
+    setCsrfCookie();
     const fetchMock = vi
       .fn()
       .mockResolvedValue(jsonResponse(undefined, 204));
@@ -99,28 +110,69 @@ describe('auth service (HTTP mode)', () => {
     const headers = init.headers as Headers;
 
     expect(url).toBe('https://api.example.test/v1/auth/change-password');
-    expect(headers.get('Authorization')).toBe('Bearer token-1');
+    expect(headers.get(CSRF_HEADER_NAME)).toBe('csrf-1');
+    expect(headers.get('Authorization')).toBeNull();
+    expect(init.credentials).toBe('include');
     expect(init.body).toBe(
       JSON.stringify({ currentPassword: 'demo1234', newPassword: 'baru1234' }),
     );
   });
 
   it('clears the local session on logout', async () => {
-    window.localStorage.setItem(STORAGE_KEYS.token, 'token-1');
     window.localStorage.setItem(
       STORAGE_KEYS.auth,
       JSON.stringify({ ...API_USER, avatarUrl: undefined }),
     );
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(jsonResponse(undefined, 204)),
-    );
+    setCsrfCookie();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse(undefined, 204));
+    vi.stubGlobal('fetch', fetchMock);
 
     const auth = await import('./auth.service');
 
-    auth.logout();
+    await auth.logout();
 
-    expect(window.localStorage.getItem(STORAGE_KEYS.token)).toBeNull();
+    expect(window.localStorage.getItem('sakucampus.token.v1')).toBeNull();
+    expect(auth.getStoredUser()).toBeNull();
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Headers;
+
+    expect(url).toBe('https://api.example.test/v1/auth/logout');
+    expect(headers.get(CSRF_HEADER_NAME)).toBe('csrf-1');
+    expect(init.credentials).toBe('include');
+  });
+
+  it('restores the session from the server', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ ...API_USER, name: 'Andi Baru' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const auth = await import('./auth.service');
+    const user = await auth.getCurrentUser();
+
+    expect(user?.name).toBe('Andi Baru');
+    expect(auth.getStoredUser()?.name).toBe('Andi Baru');
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+
+    expect(url).toBe('https://api.example.test/v1/auth/me');
+    expect((init.headers as Headers).get('Authorization')).toBeNull();
+    expect(init.credentials).toBe('include');
+  });
+
+  it('clears the cached user when the server rejects the session', async () => {
+    window.localStorage.setItem(
+      STORAGE_KEYS.auth,
+      JSON.stringify({ ...API_USER, avatarUrl: undefined }),
+    );
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
+
+    const auth = await import('./auth.service');
+
+    await expect(auth.getCurrentUser()).resolves.toBeNull();
     expect(auth.getStoredUser()).toBeNull();
   });
 });

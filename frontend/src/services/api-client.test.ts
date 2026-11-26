@@ -1,4 +1,4 @@
-import { STORAGE_KEYS } from '@/lib/config';
+import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME } from '@/lib/config';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, apiRequest, getApiBaseUrl } from './api-client';
 
@@ -26,8 +26,17 @@ function createResponse({
   } as unknown as Response;
 }
 
+function setCsrfCookie(value: string): void {
+  document.cookie = `${CSRF_COOKIE_NAME}=${encodeURIComponent(value)}; path=/`;
+}
+
+function clearCsrfCookie(): void {
+  document.cookie = `${CSRF_COOKIE_NAME}=; max-age=0; path=/`;
+}
+
 afterEach(() => {
   window.localStorage.clear();
+  clearCsrfCookie();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
@@ -45,7 +54,7 @@ describe('getApiBaseUrl', () => {
 });
 
 describe('apiRequest', () => {
-  it('sends a JSON request to the configured base URL and returns the body', async () => {
+  it('sends a JSON request with credentials to the configured base URL', async () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.example.test/v1/');
     const fetchMock = vi
       .fn()
@@ -61,30 +70,38 @@ describe('apiRequest', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Headers;
 
     expect(url).toBe('https://api.example.test/v1/transactions');
     expect(init.method).toBe('POST');
     expect(init.body).toBe(JSON.stringify({ amount: 20_000 }));
-
-    const headers = init.headers as Headers;
-
+    expect(init.credentials).toBe('include');
     expect(headers.get('Accept')).toBe('application/json');
     expect(headers.get('Content-Type')).toBe('application/json');
+    expect(headers.get('Authorization')).toBeNull();
+    expect(headers.get(CSRF_HEADER_NAME)).toBeNull();
   });
 
-  it('attaches the stored bearer token to requests', async () => {
-    window.localStorage.setItem(STORAGE_KEYS.token, 'token-rahasia');
+  it('adds the CSRF header to mutating requests when the cookie exists', async () => {
+    setCsrfCookie('csrf-rahasia');
     const fetchMock = vi
       .fn()
       .mockResolvedValue(createResponse({ payload: [] }));
     vi.stubGlobal('fetch', fetchMock);
 
+    await apiRequest('/transactions', {
+      method: 'PATCH',
+      body: { amount: 20_000 },
+    });
     await apiRequest('/transactions');
 
-    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    const headers = init.headers as Headers;
+    const [, mutationInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [, readInit] = fetchMock.mock.calls[1] as [string, RequestInit];
 
-    expect(headers.get('Authorization')).toBe('Bearer token-rahasia');
+    expect((mutationInit.headers as Headers).get(CSRF_HEADER_NAME)).toBe(
+      'csrf-rahasia',
+    );
+    expect((readInit.headers as Headers).get(CSRF_HEADER_NAME)).toBeNull();
   });
 
   it('returns undefined for an empty 204 response', async () => {

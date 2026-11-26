@@ -1,33 +1,41 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import hmac
 import logging
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import UUID
 
 import httpx
-from fastapi import HTTPException, status
+from fastapi import HTTPException, Request, status
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
+from app.core.constants import AUDIT_TELEGRAM_SECRET_INVALID
 from app.models import TelegramAccount, TelegramLinkToken, TelegramProcessedUpdate, User
 from app.schemas.telegram import TelegramLinkTokenOut, TelegramStatusOut
 from app.schemas.transaction import TransactionCreate
-from app.services import transaction_service
+from app.services import audit_service, transaction_service
 from app.services.telegram_parser import parse_transaction
 
 logger = logging.getLogger(__name__)
 
 LINK_TOKEN_BYTES = 32
+TELEGRAM_SEND_MAX_ATTEMPTS = 3
+PROCESSED_UPDATE_RETENTION_DAYS = 7
 
 
 @dataclass(frozen=True)
 class TelegramReply:
     chat_id: int
     text: str
+    user_id: UUID | None = None
 
 
 def _now() -> datetime:
@@ -116,32 +124,93 @@ def unlink_telegram(db: Session, user: User) -> TelegramStatusOut:
     return _to_status(None)
 
 
-def was_processed(db: Session, update_id: int) -> bool:
-    return db.get(TelegramProcessedUpdate, update_id) is not None
-
-
-def mark_processed(db: Session, update_id: int) -> None:
+def claim_update(db: Session, update_id: int) -> bool:
     db.add(TelegramProcessedUpdate(update_id=update_id))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return False
+    return True
+
+
+def release_update(db: Session, update_id: int) -> None:
+    db.execute(
+        delete(TelegramProcessedUpdate).where(
+            TelegramProcessedUpdate.update_id == update_id,
+        )
+    )
     db.commit()
 
 
-def verify_webhook_secret(secret_header: str | None) -> None:
+def cleanup_processed_updates(db: Session) -> int:
+    cutoff = _now() - timedelta(days=PROCESSED_UPDATE_RETENTION_DAYS)
+    result = db.execute(
+        delete(TelegramProcessedUpdate).where(TelegramProcessedUpdate.processed_at < cutoff)
+    )
+    db.commit()
+    return result.rowcount or 0
+
+
+def _audit_webhook_secret_failure(
+    db: Session | None,
+    request: Request | None,
+    reason: str,
+) -> None:
+    if db is None:
+        return
+
+    audit_service.log_security_event(
+        db,
+        AUDIT_TELEGRAM_SECRET_INVALID,
+        outcome="failure",
+        request=request,
+        details={"reason": reason},
+    )
+
+
+def verify_webhook_secret(
+    secret_header: str | None,
+    *,
+    request: Request | None = None,
+    db: Session | None = None,
+) -> None:
     settings = get_settings()
     expected = settings.telegram_webhook_secret
+    request_id = getattr(request.state, "request_id", None) if request is not None else None
 
     if expected is not None:
-        if secret_header is None or not secrets.compare_digest(secret_header, expected):
+        provided = secret_header.encode("utf-8") if secret_header is not None else b""
+        expected_bytes = expected.encode("utf-8")
+
+        if not hmac.compare_digest(provided, expected_bytes):
+            _audit_webhook_secret_failure(db, request, "invalid_or_missing_secret")
+            logger.warning(
+                "Secret webhook Telegram tidak valid",
+                extra={"request_id": request_id},
+            )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Secret webhook Telegram tidak valid",
             )
         return
 
-    if settings.environment.lower() not in {"development", "test"}:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="TELEGRAM_WEBHOOK_SECRET belum dikonfigurasi",
+    if getattr(settings, "allow_insecure_telegram_webhook", False):
+        logger.warning(
+            "Telegram webhook berjalan tanpa secret (mode tidak aman)",
+            extra={"request_id": request_id},
         )
+        return
+
+    _audit_webhook_secret_failure(db, request, "secret_not_configured")
+    logger.error(
+        "TELEGRAM_WEBHOOK_SECRET belum dikonfigurasi",
+        extra={"request_id": request_id},
+    )
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="TELEGRAM_WEBHOOK_SECRET belum dikonfigurasi",
+    )
 
 
 def _parse_message(update: dict[str, Any]) -> tuple[int, int, str | None, str | None] | None:
@@ -167,8 +236,8 @@ def _parse_message(update: dict[str, Any]) -> tuple[int, int, str | None, str | 
     )
 
 
-def _reply(chat_id: int, text: str) -> TelegramReply:
-    return TelegramReply(chat_id=chat_id, text=text)
+def _reply(chat_id: int, text: str, user_id: UUID | None = None) -> TelegramReply:
+    return TelegramReply(chat_id=chat_id, text=text, user_id=user_id)
 
 
 def _link_account(
@@ -298,23 +367,22 @@ def process_update(db: Session, update: dict[str, Any]) -> TelegramReply | None:
             "'makan ayam 20rb' atau 'uang saku 500rb', satu transaksi per pesan.",
         )
 
-    transaction_service.create_transaction(
-        db,
-        account.user_id,
-        TransactionCreate(
-            description=parsed.description,
-            amount=parsed.amount,
-            type=parsed.type,
-            category=parsed.category,
-            date=parsed.date,
-            source="telegram",
-        ),
+    payload = TransactionCreate(
+        description=parsed.description,
+        amount=parsed.amount,
+        type=parsed.type,
+        category=parsed.category,
+        date=parsed.date,
+        source="manual",
     )
+    payload.source = "telegram"
+    transaction_service.create_transaction(db, account.user_id, payload)
 
     amount = f"{parsed.amount:,}".replace(",", ".")
     return _reply(
         chat_id,
         f"Tercatat: {parsed.description} — Rp{amount} ({parsed.category}).",
+        user_id=account.user_id,
     )
 
 
@@ -325,12 +393,28 @@ async def send_message(chat_id: int, text: str) -> None:
 
     url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
 
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.post(
-                url,
-                json={"chat_id": chat_id, "text": text},
+    for attempt in range(1, TELEGRAM_SEND_MAX_ATTEMPTS + 1):
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.post(
+                    url,
+                    json={"chat_id": chat_id, "text": text},
+                )
+                response.raise_for_status()
+            return
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "Gagal mengirim pesan Telegram untuk chat_id=%s (percobaan %s/%s): %s",
+                chat_id,
+                attempt,
+                TELEGRAM_SEND_MAX_ATTEMPTS,
+                exc,
             )
-            response.raise_for_status()
-    except httpx.HTTPError:
-        logger.warning("Gagal mengirim pesan Telegram untuk chat_id=%s", chat_id)
+            if attempt < TELEGRAM_SEND_MAX_ATTEMPTS:
+                await asyncio.sleep(0.5 * 2 ** (attempt - 1))
+
+    logger.error(
+        "Balasan Telegram gagal dikirim setelah %s percobaan untuk chat_id=%s",
+        TELEGRAM_SEND_MAX_ATTEMPTS,
+        chat_id,
+    )

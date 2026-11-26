@@ -12,7 +12,7 @@ from app.core.dependencies import get_current_user
 from app.database import get_db
 from app.models import User
 from app.schemas.transaction import TransactionCreate, TransactionOut, TransactionUpdate
-from app.services import transaction_service
+from app.services import rule_engine, transaction_service
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
 
@@ -46,12 +46,14 @@ def list_transactions(
 
 
 @router.post("", response_model=TransactionOut, status_code=status.HTTP_201_CREATED)
-def create_transaction(
+async def create_transaction(
     payload: TransactionCreate,
     current_user: CurrentUser,
     db: DbSession,
 ) -> TransactionOut:
-    return transaction_service.create_transaction(db, current_user.id, payload)
+    result = transaction_service.create_transaction(db, current_user.id, payload)
+    await rule_engine.evaluate_and_notify(db, current_user)
+    return result
 
 
 @router.get("/{transaction_id}", response_model=TransactionOut)
@@ -64,25 +66,28 @@ def get_transaction(
 
 
 @router.patch("/{transaction_id}", response_model=TransactionOut)
-def update_transaction(
+async def update_transaction(
     transaction_id: uuid.UUID,
     payload: TransactionUpdate,
     current_user: CurrentUser,
     db: DbSession,
 ) -> TransactionOut:
-    return transaction_service.update_transaction(
+    result = transaction_service.update_transaction(
         db,
         current_user.id,
         transaction_id,
         payload,
     )
+    await rule_engine.evaluate_and_notify(db, current_user)
+    return result
 
 
 @router.delete("/{transaction_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_transaction(
+async def delete_transaction(
     transaction_id: uuid.UUID,
     current_user: CurrentUser,
     db: DbSession,
 ) -> Response:
     transaction_service.delete_transaction(db, current_user.id, transaction_id)
+    await rule_engine.evaluate_and_notify(db, current_user)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -1,26 +1,36 @@
-import { STORAGE_KEYS } from '@/lib/config';
+import { CSRF_COOKIE_NAME, STORAGE_KEYS } from '@/lib/config';
 
-export function getStoredToken(): string | null {
-  try {
-    const token = window.localStorage.getItem(STORAGE_KEYS.token);
-
-    return token && token.trim().length > 0 ? token : null;
-  } catch {
+export function getCsrfToken(): string | null {
+  if (typeof document === 'undefined') {
     return null;
   }
-}
 
-export function storeToken(token: string): void {
+  const prefix = `${CSRF_COOKIE_NAME}=`;
+  const cookie = document.cookie
+    .split(';')
+    .map((item) => item.trim())
+    .find((item) => item.startsWith(prefix));
+
+  if (!cookie) {
+    return null;
+  }
+
+  const value = cookie.slice(prefix.length);
+
+  if (!value) {
+    return null;
+  }
+
   try {
-    window.localStorage.setItem(STORAGE_KEYS.token, token);
+    return decodeURIComponent(value);
   } catch {
-    return;
+    return value;
   }
 }
 
-export function clearStoredToken(): void {
+export function clearStoredUser(): void {
   try {
-    window.localStorage.removeItem(STORAGE_KEYS.token);
+    window.localStorage.removeItem(STORAGE_KEYS.auth);
   } catch {
     return;
   }

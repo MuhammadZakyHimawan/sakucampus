@@ -33,7 +33,8 @@ export function ProfilePage() {
       await updateProfile({
         name: values.name,
         email: values.email,
-        avatarUrl: values.avatarUrl?.trim() || undefined,
+        avatarUrl:
+          values.avatarUrl === undefined ? undefined : values.avatarUrl.trim() || null,
       });
       toast({
         title: 'Profil diperbarui',

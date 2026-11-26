@@ -4,7 +4,8 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import select
 
-from app.models import TelegramLinkToken
+from app.core.constants import AUDIT_TELEGRAM_SECRET_INVALID
+from app.models import SecurityEvent, TelegramLinkToken
 from app.services import telegram_service
 
 
@@ -19,6 +20,7 @@ def telegram_settings(monkeypatch):
             telegram_webhook_secret=None,
             telegram_link_token_minutes=15,
             environment="test",
+            allow_insecure_telegram_webhook=True,
         ),
     )
 
@@ -211,6 +213,7 @@ def test_webhook_requires_configured_secret(client, monkeypatch):
             telegram_webhook_secret="rahasia-webhook",
             telegram_link_token_minutes=15,
             environment="production",
+            allow_insecure_telegram_webhook=False,
         ),
     )
 
@@ -235,7 +238,32 @@ def _capture_replies(monkeypatch) -> list[str]:
     return replies
 
 
-def test_webhook_requires_secret_outside_development(client, monkeypatch):
+def test_chat_transaction_triggers_rule_engine_notifications(client, auth, monkeypatch):
+    replies = _capture_replies(monkeypatch)
+    account = auth()
+    _link(client, account["headers"])
+
+    settings = client.patch(
+        "/api/v1/settings/finance",
+        headers=account["headers"],
+        json={"minBalance": 2_000_000},
+    )
+    assert settings.status_code == 200, settings.text
+
+    response = client.post(
+        "/api/v1/telegram/webhook",
+        json=_update("makan ayam 20rb", update_id=2),
+    )
+    assert response.status_code == 200, response.text
+
+    notifications = client.get("/api/v1/notifications", headers=account["headers"])
+    assert notifications.status_code == 200, notifications.text
+    assert any(item["type"] == "balance" for item in notifications.json())
+    assert any("Tercatat" in text for text in replies)
+    assert any("Saldo mulai menipis" in text for text in replies)
+
+
+def test_webhook_requires_secret_when_insecure_mode_disabled(client, monkeypatch):
     monkeypatch.setattr(
         telegram_service,
         "get_settings",
@@ -244,13 +272,49 @@ def test_webhook_requires_secret_outside_development(client, monkeypatch):
             telegram_bot_username=None,
             telegram_webhook_secret=None,
             telegram_link_token_minutes=15,
-            environment="production",
+            environment="development",
+            allow_insecure_telegram_webhook=False,
         ),
     )
 
     response = client.post("/api/v1/telegram/webhook", json=_update("/help"))
 
     assert response.status_code == 503
+
+
+def test_webhook_rejects_malformed_payload(client):
+    response = client.post(
+        "/api/v1/telegram/webhook",
+        json={"update_id": "bukan-angka", "message": {}},
+    )
+
+    assert response.status_code == 422
+
+
+def test_webhook_checks_secret_before_payload(client, monkeypatch):
+    monkeypatch.setattr(
+        telegram_service,
+        "get_settings",
+        lambda: SimpleNamespace(
+            telegram_bot_token=None,
+            telegram_bot_username=None,
+            telegram_webhook_secret="rahasia-webhook",
+            telegram_link_token_minutes=15,
+            environment="production",
+            allow_insecure_telegram_webhook=False,
+        ),
+    )
+
+    malformed = {"update_id": "bukan-angka", "message": {}}
+    rejected = client.post("/api/v1/telegram/webhook", json=malformed)
+    accepted = client.post(
+        "/api/v1/telegram/webhook",
+        json=malformed,
+        headers={"X-Telegram-Bot-Api-Secret-Token": "rahasia-webhook"},
+    )
+
+    assert rejected.status_code == 403
+    assert accepted.status_code == 422
 
 
 def test_chat_message_creates_telegram_transaction(client, auth):
@@ -297,6 +361,12 @@ def test_unparseable_chat_message_replies_with_format_hint(client, auth, monkeyp
 def test_duplicate_webhook_update_does_not_duplicate_transaction(client, auth):
     account = auth()
     _link(client, account["headers"])
+    settings = client.patch(
+        "/api/v1/settings/finance",
+        headers=account["headers"],
+        json={"minBalance": 2_000_000},
+    )
+    assert settings.status_code == 200, settings.text
     update = _update("uang saku 500rb", update_id=2)
 
     client.post("/api/v1/telegram/webhook", json=update)
@@ -304,3 +374,34 @@ def test_duplicate_webhook_update_does_not_duplicate_transaction(client, auth):
 
     transactions = client.get("/api/v1/transactions", headers=account["headers"]).json()
     assert len(transactions) == 1
+    notifications = client.get("/api/v1/notifications", headers=account["headers"]).json()
+    assert sum(item["type"] == "balance" for item in notifications) == 1
+
+
+def test_invalid_webhook_secret_is_rejected_and_audited(client, db_session, monkeypatch):
+    monkeypatch.setattr(
+        telegram_service,
+        "get_settings",
+        lambda: SimpleNamespace(
+            telegram_bot_token=None,
+            telegram_bot_username=None,
+            telegram_webhook_secret="rahasia-webhook-yang-panjang",
+            telegram_link_token_minutes=15,
+            environment="test",
+            allow_insecure_telegram_webhook=False,
+        ),
+    )
+
+    response = client.post(
+        "/api/v1/telegram/webhook",
+        json=_update("/help"),
+        headers={"X-Telegram-Bot-Api-Secret-Token": "salah"},
+    )
+
+    assert response.status_code == 403
+    event = db_session.scalar(
+        select(SecurityEvent).where(SecurityEvent.event_type == AUDIT_TELEGRAM_SECRET_INVALID)
+    )
+    assert event is not None
+    assert event.outcome == "failure"
+    assert event.details == {"reason": "invalid_or_missing_secret"}

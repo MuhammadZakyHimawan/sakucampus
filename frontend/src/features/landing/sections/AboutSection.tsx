@@ -1,5 +1,5 @@
 import { Card, CardContent } from '@/components/ui/Card';
-import { APP_NAME } from '@/lib/config';
+import { APP_NAME, MOCK_API_ENABLED } from '@/lib/config';
 import { aboutPoints } from '../content';
 
 export function AboutSection() {
@@ -24,9 +24,10 @@ export function AboutSection() {
             dilakukan setiap hari, lalu mengubah catatan itu menjadi keputusan
             yang lebih baik.
           </p>
-          <p className="mt-4 rounded-lg bg-warning/10 px-3.5 py-3 text-xs leading-relaxed text-warning">
-            Tahap saat ini adalah MVP frontend. Integrasi Telegram, backend,
-            dan analisis otomatis ditandai sebagai simulasi.
+          <p className="mt-4 rounded-lg bg-info/10 px-3.5 py-3 text-xs leading-relaxed text-info">
+            {MOCK_API_ENABLED
+              ? 'Kamu sedang melihat mode demo dengan data contoh. Aktifkan mode backend untuk menyimpan data sungguhan.'
+              : 'Data tersinkron dengan backend. Analisis proaktif berbasis rule engine sedang dikembangkan bertahap.'}
           </p>
         </div>
 

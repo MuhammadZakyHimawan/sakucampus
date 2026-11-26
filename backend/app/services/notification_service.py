@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import Notification
@@ -31,6 +32,44 @@ def _get_notification(
     if notification is None or notification.user_id != user_id:
         raise ResourceNotFoundError("Notifikasi tidak ditemukan")
     return notification
+
+
+def create_notification(
+    db: Session,
+    user_id: uuid.UUID,
+    *,
+    type: str,
+    title: str,
+    message: str,
+    link: str | None = None,
+    rule_key: str | None = None,
+) -> NotificationOut | None:
+    if rule_key is not None:
+        existing = db.scalar(
+            select(Notification).where(
+                Notification.user_id == user_id,
+                Notification.rule_key == rule_key,
+            )
+        )
+        if existing is not None:
+            return None
+
+    notification = Notification(
+        user_id=user_id,
+        type=type,
+        title=title,
+        message=message,
+        link=link,
+        rule_key=rule_key,
+    )
+    db.add(notification)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return None
+    db.refresh(notification)
+    return _to_out(notification)
 
 
 def list_notifications(

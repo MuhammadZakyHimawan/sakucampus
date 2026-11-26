@@ -1,8 +1,19 @@
+import secrets
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
 
+from app.config import Environment, get_settings
+from app.core.constants import (
+    ACCESS_TOKEN_COOKIE,
+    AUDIT_LOGIN_FAILED,
+    AUDIT_LOGIN_SUCCESS,
+    AUDIT_LOGOUT,
+    AUDIT_PASSWORD_CHANGED,
+    AUDIT_REGISTER,
+    CSRF_COOKIE,
+)
 from app.core.dependencies import get_current_user
 from app.database import get_db
 from app.models import User
@@ -14,12 +25,14 @@ from app.schemas.auth import (
     RegisterRequest,
 )
 from app.schemas.user import UserOut
+from app.services.audit_service import log_security_event
 from app.services.auth_service import (
     authenticate_user,
     build_auth_response,
     build_user_out,
     change_user_password,
     register_user,
+    revoke_user_tokens,
     update_user_profile,
 )
 from app.services.errors import EmailAlreadyRegisteredError, InvalidCredentialsError
@@ -30,30 +43,99 @@ DbSession = Annotated[Session, Depends(get_db)]
 CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
+def _audit(
+    db: Session,
+    event_type: str,
+    *,
+    outcome: str,
+    request: Request,
+    user: User | None = None,
+) -> None:
+    log_security_event(
+        db,
+        event_type,
+        outcome=outcome,
+        user_id=user.id if user is not None else None,
+        request=request,
+    )
+
+
+def _session_cookie_options() -> tuple[bool, int]:
+    settings = get_settings()
+
+    return settings.environment is Environment.PRODUCTION, settings.access_token_expire_minutes * 60
+
+
+def _set_session_cookies(response: Response, token: str) -> None:
+    secure, max_age = _session_cookie_options()
+
+    response.set_cookie(
+        ACCESS_TOKEN_COOKIE,
+        token,
+        max_age=max_age,
+        httponly=True,
+        secure=secure,
+        samesite="lax",
+        path="/",
+    )
+    response.set_cookie(
+        CSRF_COOKIE,
+        secrets.token_urlsafe(32),
+        max_age=max_age,
+        httponly=False,
+        secure=secure,
+        samesite="lax",
+        path="/",
+    )
+
+
+def _delete_session_cookies(response: Response) -> None:
+    response.delete_cookie(ACCESS_TOKEN_COOKIE, path="/")
+    response.delete_cookie(CSRF_COOKIE, path="/")
+
+
 @router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
-def register(payload: RegisterRequest, db: DbSession) -> AuthResponse:
+def register(
+    payload: RegisterRequest,
+    db: DbSession,
+    response: Response,
+    request: Request,
+) -> AuthResponse:
     try:
         user = register_user(db, payload)
     except EmailAlreadyRegisteredError as exc:
+        _audit(db, AUDIT_REGISTER, outcome="failure", request=request)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Email sudah terdaftar",
         ) from exc
 
-    return build_auth_response(db, user)
+    result, token = build_auth_response(db, user)
+    _set_session_cookies(response, token)
+    _audit(db, AUDIT_REGISTER, outcome="success", request=request, user=user)
+    return result
 
 
 @router.post("/login", response_model=AuthResponse)
-def login(payload: LoginRequest, db: DbSession) -> AuthResponse:
+def login(
+    payload: LoginRequest,
+    db: DbSession,
+    response: Response,
+    request: Request,
+) -> AuthResponse:
     user = authenticate_user(db, payload.email, payload.password)
     if user is None:
+        _audit(db, AUDIT_LOGIN_FAILED, outcome="failure", request=request)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Email atau password salah",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    return build_auth_response(db, user)
+    result, token = build_auth_response(db, user)
+    _set_session_cookies(response, token)
+    _audit(db, AUDIT_LOGIN_SUCCESS, outcome="success", request=request, user=user)
+    return result
 
 
 @router.get("/me", response_model=UserOut)
@@ -83,18 +165,40 @@ def change_password(
     payload: ChangePasswordRequest,
     current_user: CurrentUser,
     db: DbSession,
+    request: Request,
 ) -> Response:
     try:
         change_user_password(db, current_user, payload)
     except InvalidCredentialsError as exc:
+        _audit(
+            db,
+            AUDIT_PASSWORD_CHANGED,
+            outcome="failure",
+            request=request,
+            user=current_user,
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Password saat ini salah",
         ) from exc
 
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    _result, token = build_auth_response(db, current_user)
+    response = Response(status_code=status.HTTP_204_NO_CONTENT)
+    _set_session_cookies(response, token)
+    _audit(
+        db,
+        AUDIT_PASSWORD_CHANGED,
+        outcome="success",
+        request=request,
+        user=current_user,
+    )
+    return response
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-def logout(_current_user: CurrentUser) -> Response:
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+def logout(current_user: CurrentUser, db: DbSession, request: Request) -> Response:
+    revoke_user_tokens(db, current_user)
+    response = Response(status_code=status.HTTP_204_NO_CONTENT)
+    _delete_session_cookies(response)
+    _audit(db, AUDIT_LOGOUT, outcome="success", request=request, user=current_user)
+    return response
